@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>F29 미국장 브리핑 — 오늘의 시장 상태 해석</title>
+<meta name="description" content="미국 주식 섹터 로테이션·테마 순환매 데이터를 사람이 읽을 수 있게 해석한 미국장 브리핑. 주도·이탈·관찰 종목과 시장 내부지표. 예측이 아닌 상태 판정.">
+<meta name="robots" content="index, follow">
+<link rel="canonical" href="https://f29.io/moneyflow/briefing/">
+<meta property="og:type" content="article">
+<meta property="og:title" content="F29 미국장 브리핑">
+<meta property="og:description" content="미국 테마 데이터를 해석한 오늘의 미국장 브리핑. 주도·이탈·관찰 상태를 매일 갱신.">
+<meta property="og:url" content="https://f29.io/moneyflow/briefing/">
+<meta property="og:site_name" content="F29">
+<meta property="og:locale" content="ko_KR">
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  :root{
+    --bg:#0A0E17; --card:#131A28; --card2:#0F1520;
+    --line:#1F2A3D; --line2:#2C3A54;
+    --txt:#E8EDF7; --txt2:#8B9AB5; --txt3:#5A6B84;
+    --teal:#3DD8B0; --purple:#9D7BEA; --pink:#E85D9C; --gold:#D8B45F;
+    --exit:#F0997B;
+  }
+  body { background:var(--bg); font-family:'Pretendard',-apple-system,'Apple SD Gothic Neo','Malgun Gothic',BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; color:var(--txt); line-height:1.6; -webkit-font-smoothing:antialiased; }
+  .wrap { max-width:600px; margin:0 auto; padding:16px; }
+
+  /* top bar */
+  .topbar { display:flex; align-items:baseline; justify-content:space-between; margin-bottom:2px; }
+  .topbar .brand { font-size:16px; font-weight:600; color:var(--teal); letter-spacing:-0.01em; }
+  .topbar .back { font-size:11px; color:var(--txt2); text-decoration:none; }
+  .topbar .back:hover { color:var(--txt); }
+  .asof { font-size:11px; color:var(--txt3); margin-bottom:16px; }
+
+  /* daily / weekly tabs */
+  .tabs { display:flex; gap:8px; margin-bottom:18px; }
+  .tab { appearance:none; -webkit-appearance:none; background:var(--card2); border:0.5px solid var(--line); color:var(--txt2);
+         font:inherit; font-size:12px; font-weight:600; padding:8px 16px; border-radius:8px; cursor:pointer; }
+  .tab[aria-selected="true"] { background:var(--card); border-color:var(--line2); color:var(--teal); }
+  .tab:focus-visible { outline:2px solid var(--teal); outline-offset:2px; }
+
+  /* verdict / one-line */
+  .lede { font-size:16px; font-weight:600; line-height:1.5; color:var(--txt); margin-bottom:6px; }
+  .lede-sub { font-size:12px; color:var(--txt2); margin-bottom:20px; }
+
+  /* section */
+  .sec { margin-bottom:22px; }
+  .sec-eyebrow { font-size:11px; font-weight:600; color:var(--txt3); text-transform:uppercase; letter-spacing:0.08em;
+                 padding-bottom:6px; border-bottom:0.5px solid var(--line); margin-bottom:10px; }
+  .sec p { font-size:13.5px; color:var(--txt); margin-bottom:8px; }
+  .sec p:last-child { margin-bottom:0; }
+
+  /* state chips inline in prose */
+  .chip { display:inline-block; font-size:11px; font-weight:600; padding:1px 7px; border-radius:5px; vertical-align:middle; }
+  .chip-lead { color:var(--teal); background:rgba(61,216,176,0.10); }
+  .chip-exit { color:var(--exit); background:rgba(240,153,123,0.10); }
+  .chip-watch { color:var(--gold); background:rgba(216,180,95,0.10); }
+
+  /* watchpoints */
+  .wp { background:var(--card); border-radius:10px; padding:12px 14px; }
+  .wp li { list-style:none; font-size:13px; color:var(--txt); padding:6px 0 6px 16px; position:relative; border-bottom:0.5px solid var(--line); }
+  .wp li:last-child { border-bottom:none; }
+  .wp li::before { content:"—"; position:absolute; left:0; color:var(--txt3); }
+
+  /* footer meta */
+  .meta { margin-top:26px; padding-top:14px; border-top:0.5px solid var(--line); }
+  .meta .datarow { font-size:11px; color:var(--txt3); margin-bottom:6px; }
+  .disc { font-size:11px; color:var(--txt3); line-height:1.7; }
+  .disc strong { color:var(--txt2); font-weight:600; }
+
+  /* state screens: pending / stale / error */
+  .state { background:var(--card); border-radius:10px; padding:28px 20px; text-align:center; }
+  .state .st-title { font-size:14px; font-weight:600; color:var(--txt); margin-bottom:8px; }
+  .state .st-body { font-size:12.5px; color:var(--txt2); line-height:1.7; }
+  .state.warn { border:0.5px solid var(--gold); }
+  .state.warn .st-title { color:var(--gold); }
+
+  .stale-banner { display:none; background:rgba(216,180,95,0.08); border:0.5px solid rgba(216,180,95,0.35);
+                  border-radius:8px; padding:10px 12px; margin-bottom:16px; font-size:12px; color:var(--gold); }
+
+  .hidden { display:none; }
+  @media (max-width:400px){ .wrap{ padding:14px; } .lede{ font-size:15px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="topbar">
+    <span class="brand">미국장 브리핑</span>
+    <a class="back" href="/moneyflow">← 돈의 흐름</a>
+  </div>
+  <div class="asof" id="asof">데이터 기준 시각을 확인하고 있습니다.</div>
+
+  <div class="tabs" role="tablist" aria-label="브리핑 종류">
+    <button class="tab" id="tab-daily" role="tab" aria-selected="true" onclick="loadBriefing('daily')">데일리</button>
+    <button class="tab" id="tab-weekly" role="tab" aria-selected="false" onclick="loadBriefing('weekly')">주간</button>
+  </div>
+
+  <div class="stale-banner" id="stale">최신 데이터가 아직 반영되지 않은 브리핑입니다. 참고용으로만 확인하세요.</div>
+
+  <!-- content mount -->
+  <div id="content">
+    <div class="state">
+      <div class="st-title">브리핑을 불러오는 중입니다.</div>
+      <div class="st-body">잠시만 기다려 주세요.</div>
+    </div>
+  </div>
+
+  <div class="meta">
+    <div class="datarow" id="datarow">데이터 출처: F29 US Money Flow · TradingView 시장 내부지표</div>
+    <div class="disc">
+      <strong>이 브리핑에 대하여.</strong>
+      F29 미국장 브리핑은 섹터 로테이션과 테마 순환매 데이터를 사람이 읽을 수 있게 해석한 결과입니다.
+      주도·이탈·관찰 같은 상태 표현은 자금 관심도의 현재 국면을 나타낼 뿐이며, 앞으로의 방향이나 매매 시점을 뜻하지 않습니다.
+      매수·매도 판단은 각자의 몫입니다.
+    </div>
+  </div>
+
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var API = "/moneyflow/api/briefing/latest";
+  var contentEl = document.getElementById("content");
+  var asofEl = document.getElementById("asof");
+  var staleEl = document.getElementById("stale");
+  var datarowEl = document.getElementById("datarow");
+
+  function esc(s){ return String(s==null?"":s).replace(/[&<>"']/g, function(c){
+    return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]; }); }
+
+  function setTabs(type){
+    var d = document.getElementById("tab-daily"), w = document.getElementById("tab-weekly");
+    d.setAttribute("aria-selected", type==="daily" ? "true":"false");
+    w.setAttribute("aria-selected", type==="weekly" ? "true":"false");
+  }
+
+  function renderPending(type){
+    staleEl.style.display = "none";
+    asofEl.textContent = "데이터 기준 시각 미정";
+    contentEl.innerHTML =
+      '<div class="state">'
+      + '<div class="st-title">' + (type==="weekly"?"주간":"오늘의") + ' 미국장 브리핑을 준비하고 있습니다.</div>'
+      + '<div class="st-body">최신 미국 시장 데이터를 확인한 뒤 브리핑이 표시됩니다.<br>미국장 마감 직후 갱신됩니다.</div>'
+      + '</div>';
+  }
+
+  function renderError(){
+    staleEl.style.display = "none";
+    asofEl.textContent = "";
+    contentEl.innerHTML =
+      '<div class="state warn">'
+      + '<div class="st-title">브리핑을 불러오지 못했습니다.</div>'
+      + '<div class="st-body">잠시 후 다시 시도해 주세요.</div>'
+      + '</div>';
+  }
+
+  // b: published briefing object (schema: title, summary, sections[], watchpoints[], market_date, f29_as_of, stale?)
+  function renderBriefing(b){
+    var html = "";
+    if (b.title)   html += '<div class="lede">' + esc(b.title) + '</div>';
+    if (b.summary) html += '<div class="lede-sub">' + esc(b.summary) + '</div>';
+
+    var secs = Array.isArray(b.sections) ? b.sections : [];
+    for (var i=0; i<secs.length; i++){
+      var s = secs[i];
+      html += '<div class="sec">';
+      if (s.title) html += '<div class="sec-eyebrow">' + esc(s.title) + '</div>';
+      var paras = Array.isArray(s.paragraphs) ? s.paragraphs : (s.body ? [s.body] : []);
+      for (var j=0; j<paras.length; j++){ html += '<p>' + esc(paras[j]) + '</p>'; }
+      html += '</div>';
+    }
+
+    var wps = Array.isArray(b.watchpoints) ? b.watchpoints : [];
+    if (wps.length){
+      html += '<div class="sec"><div class="sec-eyebrow">다음 장에서 확인할 것</div>';
+      html += '<ul class="wp">';
+      for (var k=0; k<wps.length; k++){ html += '<li>' + esc(wps[k]) + '</li>'; }
+      html += '</ul></div>';
+    }
+
+    contentEl.innerHTML = html || '<div class="state"><div class="st-title">표시할 내용이 없습니다.</div></div>';
+
+    // as-of + stale banner
+    var md = b.market_date || b.f29_as_of || "";
+    asofEl.textContent = md ? (esc(md) + " 장마감 기준") : "";
+    staleEl.style.display = b.stale ? "block" : "none";
+    if (b.source) datarowEl.textContent = "데이터 출처: " + esc(b.source);
+  }
+
+  window.loadBriefing = function(type){
+    type = (type==="weekly") ? "weekly" : "daily";
+    setTabs(type);
+    staleEl.style.display = "none";
+    contentEl.innerHTML = '<div class="state"><div class="st-title">불러오는 중…</div></div>';
+    fetch(API + "?type=" + type, { cache:"no-store" })
+      .then(function(r){ return r.json(); })
+      .then(function(b){
+        if (!b || b.status === "pending") { renderPending(type); }
+        else { renderBriefing(b); }
+      })
+      .catch(function(){ renderError(); });
+  };
+
+  loadBriefing("daily");
+})();
+</script>
+</body>
+</html>
