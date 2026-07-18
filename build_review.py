@@ -46,14 +46,20 @@ a{color:var(--teal);text-decoration:none}
 """
 
 
-def eligible_for_latest(ev):
-    """latest.html 후보 자격. 개별 review.html은 응답만 있으면 생성하되,
-    latest는 아래를 모두 통과한 run만 갱신한다."""
-    return (ev.get("stop_reason") == "end_turn"
+def eligible_for_latest(ev, checks=None):
+    """latest.html 후보 자격.
+    개별 review.html은 응답만 있으면 생성하되, latest는 아래를 모두 통과한 run만 갱신한다.
+    데이터 상태 + 자동검사 FAIL(bad) 0건을 함께 요구한다."""
+    base = (ev.get("stop_reason") == "end_turn"
             and ev.get("close_snapshot_state") == "fresh"
             and ev.get("daily_state") == "fresh"
             and ev.get("comparison_status") in {"baseline_only", "ready"}
             and bool(ev.get("output_sha256")))
+    if not base:
+        return False
+    if checks is None:
+        return False   # 검사 없이 자격 부여 금지
+    return not any(c[2] == "bad" for c in checks)
 
 
 def esc(s):
@@ -81,8 +87,12 @@ def run_checks(text, ev, raw, rd=None):
                             "ok" if same else "bad"))
 
     n = len(text)
-    ok = 1500 <= n <= 2500
-    out.append(("분량", "%d자" % n, "ok" if ok else "warn"))
+    if ev.get("comparison_status") == "baseline_only":
+        lo, hi = 1000, 1600
+    else:
+        lo, hi = 1500, 2500
+    ok = lo <= n <= hi
+    out.append(("분량", "%d자 (기준 %d~%d)" % (n, lo, hi), "ok" if ok else "warn"))
 
     sr = ev.get("stop_reason")
     out.append(("stop_reason", str(sr), "ok" if sr == "end_turn" else "bad"))
@@ -134,8 +144,9 @@ def run_checks(text, ev, raw, rd=None):
     return out
 
 
-def render_review(run_id, ev, text, raw, comparison, rd=None):
-    checks = run_checks(text, ev, raw, rd)
+def render_review(run_id, ev, text, raw, comparison, rd=None, checks=None):
+    if checks is None:
+        checks = run_checks(text, ev, raw, rd)
     rows = [
         ("현재 기준일", ev.get("current_as_of")),
         ("비교 기준일", ev.get("previous_as_of") or "없음 (baseline)"),
@@ -253,7 +264,9 @@ def main():
             cmpj = json.load(open(os.path.join(rd, "comparison.json"), encoding="utf-8"))
         except Exception:
             pass
-        h = render_review(rid, ev, text, raw, cmpj, rd)
+        checks = run_checks(text, ev, raw, rd)
+        elig = eligible_for_latest(ev, checks)
+        h = render_review(rid, ev, text, raw, cmpj, rd, checks)
         tmp = os.path.join(rd, "review.html.tmp")
         open(tmp, "w", encoding="utf-8").write(h)
         os.replace(tmp, os.path.join(rd, "review.html"))
@@ -263,9 +276,11 @@ def main():
         tmp2 = os.path.join(rundir, rid + ".html.tmp")
         open(tmp2, "w", encoding="utf-8").write(h)
         os.replace(tmp2, os.path.join(rundir, rid + ".html"))
-        runs.append({"run_id": rid, "ev": ev, "html": h, "eligible": eligible_for_latest(ev)})
+        runs.append({"run_id": rid, "ev": ev, "html": h, "eligible": elig})
+        nbad = sum(1 for c in checks if c[2] == "bad")
         print("review.html ->", os.path.join(rd, "review.html"),
-              "| runs/%s.html" % rid, "| latest자격:", "O" if eligible_for_latest(ev) else "X")
+              "| runs/%s.html" % rid, "| 검사FAIL %d건" % nbad,
+              "| latest자격:", "O" if elig else "X")
 
     if not runs:
         print("no successful runs found"); return 0
