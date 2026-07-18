@@ -46,6 +46,16 @@ a{color:var(--teal);text-decoration:none}
 """
 
 
+def eligible_for_latest(ev):
+    """latest.html 후보 자격. 개별 review.html은 응답만 있으면 생성하되,
+    latest는 아래를 모두 통과한 run만 갱신한다."""
+    return (ev.get("stop_reason") == "end_turn"
+            and ev.get("close_snapshot_state") == "fresh"
+            and ev.get("daily_state") == "fresh"
+            and ev.get("comparison_status") in {"baseline_only", "ready"}
+            and bool(ev.get("output_sha256")))
+
+
 def esc(s):
     return html.escape("" if s is None else str(s), quote=True)
 
@@ -55,8 +65,20 @@ def sentences(t):
     return [x for x in re.split(r"(?<!\d)[.!?](?!\d)|\n+", t) if x and x.strip()]
 
 
-def run_checks(text, ev, raw):
+def run_checks(text, ev, raw, rd=None):
     out = []
+
+    # integrity: re-hash canonical files and compare with recorded SHA
+    if rd:
+        import hashlib
+        for fn, key in (("response.txt", "output_sha256"), ("prompt.txt", "prompt_sha256")):
+            fp = os.path.join(rd, fn)
+            rec = ev.get(key)
+            if os.path.isfile(fp) and rec:
+                actual = hashlib.sha256(open(fp, "rb").read()).hexdigest()
+                same = (actual == rec)
+                out.append(("%s SHA 대조" % fn, "일치" if same else "불일치(변조 의심)",
+                            "ok" if same else "bad"))
 
     n = len(text)
     ok = 1500 <= n <= 2500
@@ -112,8 +134,8 @@ def run_checks(text, ev, raw):
     return out
 
 
-def render_review(run_id, ev, text, raw, comparison):
-    checks = run_checks(text, ev, raw)
+def render_review(run_id, ev, text, raw, comparison, rd=None):
+    checks = run_checks(text, ev, raw, rd)
     rows = [
         ("현재 기준일", ev.get("current_as_of")),
         ("비교 기준일", ev.get("previous_as_of") or "없음 (baseline)"),
@@ -187,11 +209,12 @@ def render_review(run_id, ev, text, raw, comparison):
 
 def render_index(runs):
     rows = "".join(
-        '<tr><td><a href="../evidence/%s/review.html">%s</a></td><td>%s</td><td>%s</td>'
-        '<td>%s</td><td>$%s</td><td>%s자</td></tr>'
+        '<tr><td><a href="runs/%s.html">%s</a></td><td>%s</td><td>%s</td>'
+        '<td>%s</td><td>$%s</td><td>%s자</td><td>%s</td></tr>'
         % (esc(r["run_id"]), esc(r["run_id"][:15]), esc(r["ev"].get("current_as_of")),
            esc(r["ev"].get("previous_as_of") or "-"), esc(r["ev"].get("comparison_status")),
-           esc(r["ev"].get("cost_usd")), esc(r["ev"].get("output_chars")))
+           esc(r["ev"].get("cost_usd")), esc(r["ev"].get("output_chars")),
+           "적격" if r["eligible"] else "부적격")
         for r in runs)
     return """<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -200,7 +223,7 @@ def render_index(runs):
 <h1>미국장 매크로 데일리 초안 검수 목록</h1>
 <div class="sub">총 %d건 &nbsp;|&nbsp; 내부 검수용. 게시물 아님.</div>
 <div class="card"><table class="idx">
-<tr><td>run_id</td><td>기준일</td><td>비교일</td><td>상태</td><td>비용</td><td>분량</td></tr>
+<tr><td>run_id</td><td>기준일</td><td>비교일</td><td>상태</td><td>비용</td><td>분량</td><td>latest 자격</td></tr>
 %s</table></div>
 <div class="note">최근 검수본은 latest.html 입니다.</div>
 </div></body></html>""" % (CSS, len(runs), rows)
@@ -230,12 +253,19 @@ def main():
             cmpj = json.load(open(os.path.join(rd, "comparison.json"), encoding="utf-8"))
         except Exception:
             pass
-        h = render_review(rid, ev, text, raw, cmpj)
+        h = render_review(rid, ev, text, raw, cmpj, rd)
         tmp = os.path.join(rd, "review.html.tmp")
         open(tmp, "w", encoding="utf-8").write(h)
         os.replace(tmp, os.path.join(rd, "review.html"))
-        runs.append({"run_id": rid, "ev": ev, "html": h})
-        print("review.html ->", os.path.join(rd, "review.html"))
+        # portable copy: review/runs/<run_id>.html (derived artifact only)
+        rundir = os.path.join(REVDIR, "runs")
+        os.makedirs(rundir, exist_ok=True)
+        tmp2 = os.path.join(rundir, rid + ".html.tmp")
+        open(tmp2, "w", encoding="utf-8").write(h)
+        os.replace(tmp2, os.path.join(rundir, rid + ".html"))
+        runs.append({"run_id": rid, "ev": ev, "html": h, "eligible": eligible_for_latest(ev)})
+        print("review.html ->", os.path.join(rd, "review.html"),
+              "| runs/%s.html" % rid, "| latest자격:", "O" if eligible_for_latest(ev) else "X")
 
     if not runs:
         print("no successful runs found"); return 0
@@ -246,10 +276,15 @@ def main():
     os.replace(tmp, os.path.join(REVDIR, "index.html"))
     print("index.html   ->", os.path.join(REVDIR, "index.html"))
 
-    tmp = os.path.join(REVDIR, "latest.html.tmp")
-    open(tmp, "w", encoding="utf-8").write(runs[0]["html"])
-    os.replace(tmp, os.path.join(REVDIR, "latest.html"))
-    print("latest.html  ->", os.path.join(REVDIR, "latest.html"), "(run %s)" % runs[0]["run_id"])
+    elig = [r for r in runs if r["eligible"]]
+    if elig:
+        tmp = os.path.join(REVDIR, "latest.html.tmp")
+        open(tmp, "w", encoding="utf-8").write(elig[0]["html"])
+        os.replace(tmp, os.path.join(REVDIR, "latest.html"))
+        print("latest.html  ->", os.path.join(REVDIR, "latest.html"),
+              "(run %s)" % elig[0]["run_id"])
+    else:
+        print("latest.html  -> 갱신 안 함 (적격 run 없음, 기존 latest 유지)")
     print("REVIEW BUILD: DONE (%d runs)" % len(runs))
     return 0
 
