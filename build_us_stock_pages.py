@@ -351,7 +351,71 @@ td.hold{color:var(--gold);font-size:.84rem}
 .tlbadge{margin-left:auto;background:#1f2937;color:var(--gold);font-size:.72rem;padding:2px 8px;border-radius:10px}
 .tlaccum{color:var(--gold);padding:8px 0;font-size:.95rem}
 .topchange{color:var(--sub);font-size:.86rem;margin:-6px 0 18px;white-space:normal;word-break:keep-all}
+.pat{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin:2px 0 10px}
+.patname{font-size:1.15rem;font-weight:700;color:var(--tx)}
+.patscore{font-size:1.05rem;font-weight:700;color:var(--gold);white-space:nowrap}
+.patmax{font-size:.8rem;font-weight:400;color:var(--sub);margin-left:1px}
+.patlink{margin-top:10px}
+.patlink a{color:var(--teal);text-decoration:none;font-size:.9rem}
+.patlink a:hover{text-decoration:underline}
 '''
+
+
+def load_pattern_judgments():
+    """US-P05-PATTERN: Pattern Lab 판정 최신 가용분 로드 -> {TICKER: row}.
+    빌더(07:00 UTC)가 pattern cron(07:30/07:40)보다 먼저 돌아 당일 파일이 없을 수 있다.
+    가장 최근 존재 파일을 쓰고, 화면에 그 기준일을 명시한다(보정/추정 금지)."""
+    import glob
+    d = '/root/f29-pattern-lab/history/pattern_judgments'
+    try:
+        files = sorted(glob.glob(os.path.join(d, '*.jsonl')))
+    except Exception:
+        return {}
+    if not files:
+        return {}
+    out = {}
+    try:
+        with open(files[-1], encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    r = json.loads(line)
+                except Exception:
+                    continue
+                t = r.get('ticker')
+                if t and isinstance(r.get('top1'), dict):
+                    out[t] = r
+    except Exception:
+        return {}
+    return out
+
+
+def card_pattern(rec, pj, updated):
+    """차트 형태 (US-P05-PATTERN). Pattern Lab top1 표시, 미보유 -> None(카드 생략)."""
+    r = (pj or {}).get(rec.get('ticker'))
+    if not r:
+        return None
+    t1 = r.get('top1') or {}
+    title = t1.get('pattern_title')
+    score = t1.get('score')
+    if not title or score is None:
+        return None
+    base = r.get('data_last_date') or r.get('date') or ''
+    bars = r.get('bars', 60)
+    note = ''
+    if base and updated and base != updated:
+        note = (f'<p class="hint">형태 비교 기준일 {esc(base)} — 이 페이지 기준일'
+                f'({esc(updated)})과 다릅니다.</p>')
+    return (f'<section class="card"><h2>차트 형태</h2>'
+            f'<p class="pat"><span class="patname">{esc(title)}</span>'
+            f'<span class="patscore">닮음 {esc(score)}<span class="patmax">/100</span></span></p>'
+            f'<p class="hint">최근 {esc(bars)}거래일 종가 흐름을 학습용 형태와 비교한 닮음 '
+            f'점수입니다. 상승·하락 확률이 아니며 방향을 전망하지 않습니다.</p>'
+            f'{note}'
+            f'<p class="patlink"><a href="/lab/match.html?ticker={esc(rec["ticker"])}">차트분석 연구소에서 직접 비교 &rsaquo;</a></p>'
+            f'</section>')
 
 
 def card_history(rec, hist, updated):
@@ -388,7 +452,7 @@ def card_history(rec, hist, updated):
             f'</section>')
 
 
-def page_html(rec, all_recs, hist, updated):
+def page_html(rec, all_recs, hist, updated, pj=None):
     ticker = rec['ticker']
     slug = slugify(ticker)
     name = rec.get('name_ko') or ticker
@@ -422,9 +486,10 @@ def page_html(rec, all_recs, hist, updated):
         c3 = card_rs(rec)
         ch = card_history(rec, hist, updated)
         c4 = card_theme_sync(rec, all_recs)
+        cp = card_pattern(rec, pj, updated)   # US-P05-PATTERN: 미보유 시 None -> 생략
         c5 = card_bench(rec)
         c6 = card_meta(rec, updated)
-        parts = [p for p in (c1, c2, c3, ch, c4, c5, c6) if p]
+        parts = [p for p in (c1, c2, c3, ch, c4, cp, c5, c6) if p]
         # 홀수 카드면 마지막 카드 full (PC 2단 하단 공백 흡수) — nth-child 미사용, 문자열 주입
         if len(parts) % 2 == 1:
             parts[-1] = parts[-1].replace('<section class="card', '<section class="card full', 1)
@@ -503,11 +568,13 @@ def main():
 
     # ── 빌드 ──
     built, indexed = [], []
+    pj = load_pattern_judgments()   # US-P05-PATTERN: 루프 밖 1회 로드
+    print('[us-build] pattern_judgments=%d' % len(pj))
     for r in positions:
         t = r.get('ticker')
         if not t: continue
         slug = slugify(t)
-        html_out = page_html(r, positions, hist_map.get(t), updated)
+        html_out = page_html(r, positions, hist_map.get(t), updated, pj)
         write_atomic(os.path.join(OUT_DIR, slug, 'index.html'), html_out)
         built.append(slug)
         if not (is_partial(r) or is_excluded(r)):
