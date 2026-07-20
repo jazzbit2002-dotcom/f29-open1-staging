@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>내 종목 차트패턴 자동 비교 — 닮은 패턴 TOP3 | F29</title>
+<meta name="description" content="종목명이나 티커를 입력하면 최근 차트와 닮은 패턴 TOP3를 유사도로 보여줍니다. 판정이 아닌 학습용 비교 도구입니다.">
+<link rel="canonical" href="https://f29.io/lab/match.html">
+<!-- GA4 (F29 공통 측정 ID) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-2GH6LTYB3R"></script>
+<script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}gtag('js',new Date());gtag('config','G-2GH6LTYB3R');</script>
+<style>
+:root{--bg:#0A0E17;--card:#131A28;--card2:#0F1520;--line:#1F2A3D;--line2:#2A3850;
+--txt:#E8EDF7;--txt2:#8B9AB5;--txt3:#5A6B84;--teal:#3DD8B0;--purple:#9D7BEA;--pink:#E85D9C;--up:#3DDC84;--down:#F0997B;--gold:#D8B45F;}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--txt);font-family:-apple-system,"Apple SD Gothic Neo","Malgun Gothic",sans-serif;margin:0;padding:0}
+.lab-main{max-width:600px;margin:0 auto;padding:18px 14px}
+.eyebrow{font-size:11px;letter-spacing:.08em;color:var(--teal);font-weight:700;text-transform:uppercase}
+.p-nav{position:sticky;top:0;z-index:50;background:rgba(10,14,23,.85);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-bottom:1px solid var(--line);margin:-18px -14px 16px;padding:0 14px}
+.p-nav-in{max-width:1080px;margin:0 auto;display:flex;align-items:center;gap:34px;padding:14px 24px}
+.p-brand{display:flex;align-items:center;gap:9px;text-decoration:none;color:var(--txt);font-weight:800;font-size:1.28rem;letter-spacing:.02em}
+.p-brand svg{display:block}
+.p-navlinks{display:none;gap:26px;margin-left:8px}
+.p-navlinks a{color:var(--txt2);text-decoration:none;font-size:.86rem;font-weight:600;white-space:nowrap;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}
+.p-navlinks a .en{display:block;font-size:.62rem;color:var(--txt3);font-weight:500;letter-spacing:.04em;margin-top:1px}
+.p-navlinks a.on{color:var(--teal)}
+.p-navlinks a.on .en{color:var(--teal);opacity:.7}
+.p-lang{margin-left:auto;display:flex;gap:3px}
+.p-lang button{background:transparent;border:1px solid var(--line);color:var(--txt3);border-radius:6px;padding:4px 8px;font-size:10.5px;cursor:pointer;font-family:inherit;transition:border-color .15s,color .15s}
+.p-lang button.on{border-color:var(--teal);color:var(--teal)}
+@media(min-width:720px){.p-navlinks{display:flex}}
+.xnav{display:flex;gap:4px;margin:0 0 16px;border-bottom:1px solid var(--line)}
+.xnav a{font-size:12.5px;font-weight:700;color:var(--txt3);text-decoration:none;padding:9px 13px;border-bottom:2px solid transparent;margin-bottom:-1px}
+.xnav a.on{color:var(--teal);border-bottom-color:var(--teal)}
+.xnav a:focus-visible{outline:2px solid var(--teal);outline-offset:-2px}
+.p-foot{margin:22px -14px 0;padding:20px 14px 26px;border-top:1px solid var(--line);background:var(--card2)}
+.p-foot-in{max-width:1080px;margin:0 auto;padding:0 24px;display:flex;flex-direction:column;gap:7px}
+.p-foot-brand{font-size:14px;font-weight:800;color:var(--txt);display:flex;align-items:center;gap:7px}
+.p-foot-links{font-size:11.5px;display:flex;gap:14px;flex-wrap:wrap}
+.p-foot-links a{color:var(--txt2);text-decoration:none;font-weight:600}
+.p-foot-links a:hover{color:var(--teal)}
+.p-foot-contact{font-size:11.5px;color:var(--txt3)}
+.p-foot-disc{font-size:10.5px;color:var(--txt3);line-height:1.6;margin-top:3px}
+h1{font-size:19px;margin:4px 0 2px;line-height:1.35}
+.sub{font-size:12.5px;color:var(--txt3);margin:0 0 16px;line-height:1.5}
+textarea{width:100%;background:var(--card);border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:11px 13px;font-size:13px;font-family:inherit;line-height:1.5;resize:vertical;min-height:64px}
+textarea::placeholder{color:var(--txt3)}
+.tickerrow{display:flex;gap:8px;margin-bottom:10px}
+.tickerrow input{flex:1;background:var(--card);border:1px solid var(--line);color:var(--txt);border-radius:8px;padding:11px 13px;font-size:14px;font-family:inherit;text-transform:uppercase}
+.tickerrow input::placeholder{color:var(--txt3);text-transform:none}
+.tickerrow button{background:var(--teal);color:#04140E;border:0;border-radius:8px;padding:0 20px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit}
+.orsep{font-size:11px;color:var(--txt3);text-align:center;margin:0 0 8px}
+.tickermeta{font-size:11px;color:var(--txt3);margin:-2px 0 10px}
+.tickerhint{font-size:11px;color:var(--txt3);margin:4px 0 10px;line-height:1.4}
+.intabs{display:flex;gap:8px;margin:0 0 14px}
+.intab{flex:1;background:var(--card);border:1px solid var(--line);color:var(--txt2);border-radius:10px;padding:11px 8px;font-size:13px;font-weight:700;cursor:pointer;font-family:inherit;transition:border-color .15s,color .15s}
+.intab.on{border-color:var(--teal);color:var(--teal);background:var(--card2)}
+.intab:focus-visible{outline:2px solid var(--teal);outline-offset:2px}
+.paste-ticker{width:100%;box-sizing:border-box;background:var(--card2);border:1px solid var(--line);color:var(--txt);border-radius:10px;padding:11px 14px;font-size:14px;font-family:inherit;text-transform:uppercase;margin-bottom:4px}
+.paste-ticker::placeholder{color:var(--txt3);text-transform:none}
+.paste-ticker:focus{outline:none;border-color:var(--teal)}
+.howto-btn{width:100%;background:transparent;border:1px dashed var(--line2);color:var(--teal);border-radius:8px;padding:9px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;margin-bottom:10px}
+.howto-btn:hover{border-color:var(--teal)}
+.howto-overlay{position:fixed;inset:0;background:rgba(4,8,14,.75);z-index:100;display:flex;align-items:center;justify-content:center;padding:18px}
+.howto-box{background:var(--card);border:1px solid var(--line);border-radius:14px;max-width:420px;width:100%;max-height:88vh;overflow-y:auto;padding:18px}
+.howto-head{font-size:15px;font-weight:800;color:var(--txt);margin-bottom:14px;display:flex;justify-content:space-between;align-items:center}
+.howto-x{background:transparent;border:0;color:var(--txt3);font-size:16px;cursor:pointer}
+.howto-img{width:100%;border-radius:8px;margin-bottom:14px;display:block}
+.howto-steps{margin:0 0 12px;padding-left:20px}
+.howto-steps li{font-size:13px;color:var(--txt2);line-height:1.65;margin-bottom:8px}
+.howto-steps b{color:var(--teal);font-weight:700}
+.howto-eg{color:var(--txt3);font-size:12px}
+.howto-note{font-size:11.5px;color:var(--gold);line-height:1.5;margin:0 0 14px}
+.howto-close{width:100%;background:var(--teal);color:#04140E;border:0;border-radius:10px;padding:12px;font-size:14px;font-weight:800;cursor:pointer;font-family:inherit}
+.splitwarn{background:#2A2410;border-left:3px solid var(--gold);border-radius:6px;padding:9px 12px;font-size:11.5px;color:var(--gold);line-height:1.5;margin-bottom:10px}
+.vbadge{font-size:11px;font-weight:600;margin:0 0 8px}
+.samples{display:flex;gap:6px;flex-wrap:wrap;margin:10px 0}
+.samples button{background:transparent;border:1px solid var(--line);color:var(--txt2);border-radius:20px;padding:5px 12px;font-size:11.5px;cursor:pointer;font-family:inherit}
+.samples button:hover,.samples button:focus-visible{border-color:var(--teal);color:var(--teal);outline:none}
+.go{width:100%;background:var(--teal);color:#04140E;border:0;border-radius:8px;padding:12px;font-size:14px;font-weight:800;cursor:pointer;font-family:inherit;margin-bottom:16px}
+.chartcard{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:8px}
+.chartcard .cap{font-size:11px;color:var(--txt3);margin-bottom:8px}
+canvas{display:block;width:100%;background:var(--card2);border-radius:8px}
+.note-notprob{font-size:11px;color:var(--txt3);text-align:center;margin:10px 0 0}
+.matchhead{font-size:12px;color:var(--txt3);margin:16px 0 10px;font-weight:600}
+.lowsim{font-size:12.5px;color:var(--gold);line-height:1.5;background:#2A2410;border:1px solid rgba(216,180,95,.35);border-radius:8px;padding:11px 14px;margin:0 0 12px}
+.match{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:10px;position:relative;overflow:hidden}
+.match .ac{position:absolute;left:0;top:0;bottom:0;width:4px}
+.match .top{display:flex;align-items:baseline;gap:8px;margin-bottom:8px}
+.match .rank{font-size:12px;color:var(--txt3);font-weight:700}
+.match .pname{font-size:15px;font-weight:800;color:var(--txt)}
+.match .sim{margin-left:auto;font-size:14px;font-weight:800}
+.match .simlabel{font-size:10px;color:var(--txt3);font-weight:500;margin-left:3px}
+.match .row{font-size:12.5px;line-height:1.6;margin-bottom:5px}
+.match .rk{color:var(--txt3);display:inline-block;width:64px;vertical-align:top}
+.match .rv{color:var(--txt2)}
+.match .warn{margin-top:8px;padding:8px 11px;background:#2A2410;border-left:3px solid var(--gold);border-radius:6px;font-size:11.5px;color:var(--gold);line-height:1.45}
+.match .struct{margin-top:8px;padding:8px 11px;background:var(--card2);border-left:3px solid var(--txt3);border-radius:6px;line-height:1.45}
+.match .struct-t{display:block;font-size:11px;font-weight:700;margin-bottom:2px}
+.match .struct-d{display:block;font-size:11.5px;color:var(--txt2)}
+.match .lablink{display:inline-block;margin-top:10px;font-size:11.5px;color:var(--teal);text-decoration:none;font-weight:600}
+.match .lablink:hover,.match .lablink:focus-visible{text-decoration:underline;outline:none}
+.disc{font-size:11px;color:var(--txt3);margin-top:16px;line-height:1.55;padding:12px;background:var(--card2);border-radius:8px}
+.err{font-size:12px;color:var(--down);margin:8px 0}
+</style>
+<script src="/shared/f29-chrome.js?v=20260709b" data-active="lab" defer></script>
+</head>
+<body>
+
+<div id="f29-header"></div>
+<main class="lab-main">
+
+<nav class="xnav"><a href="match.html" class="on">차트 패턴 자동 분석</a><a href="./">차트 패턴 연구소</a></nav>
+
+<div class="eyebrow">F29 Pattern Match</div>
+<h1>이 흐름은 어떤 패턴과 닮았을까요?</h1>
+<p class="sub">가격 흐름을 학습용 패턴과 비교해 닮은 순서로 보여줍니다. 어떤 패턴인지 고르고 판단하는 것은 사용자 몫입니다.</p>
+
+<div class="intabs">
+  <button id="tab-ticker" class="intab on" onclick="switchTab('ticker')">종목명 또는 티커로 조회</button>
+  <button id="tab-paste" class="intab" onclick="switchTab('paste')">과거 데이터 붙여넣기</button>
+</div>
+
+<div id="pane-ticker" class="pane">
+  <div class="tickerrow">
+    <input id="ticker" placeholder="종목명 또는 티커 입력 (예: 삼성전자, 애플, NVDA)" autocomplete="off" autocapitalize="characters">
+    <button onclick="runTicker()">조회</button>
+  </div>
+  <p class="tickerhint">서버에 저장된 종목이면 바로 분석됩니다. 인기 종목 통계에도 반영됩니다.</p>
+</div>
+
+<div id="pane-paste" class="pane" style="display:none">
+  <button type="button" class="howto-btn" onclick="document.getElementById('howto').style.display='flex'">사용법 (인베스팅닷컴 데이터 가져오기)</button>
+  <input id="pasteTicker" class="paste-ticker" placeholder="종목명 또는 티커 (선택) — 입력하면 검증·랭킹 반영" autocomplete="off" autocapitalize="characters">
+  <p class="tickerhint">티커를 함께 입력하면 서버 데이터와 대조해 검증하고, 인기 종목·패턴 개선에 반영됩니다. 티커 없이도 분석은 가능합니다.</p>
+  <textarea id="closes" maxlength="20000" placeholder="종가만 붙여도 되고, 인베스팅닷컴 과거 데이터 표를 그대로 붙여넣어도 됩니다.
+날짜·종가·시가·고가·저가·거래량 형식을 자동 인식합니다. (일봉 15개 이상, 30개+ 권장)"></textarea>
+  <div class="samples">
+    <button onclick="pick('rise')">상승형 예시</button>
+    <button onclick="pick('box')">박스형 예시</button>
+    <button onclick="pick('peaks')">세 봉우리형 예시</button>
+    <button onclick="pick('wbottom')">두 바닥형 예시</button>
+  </div>
+  <button class="go" onclick="run(null,'paste')">닮은 패턴 찾기</button>
+</div>
+
+<div id="err" class="err" style="display:none"></div>
+<div id="splitwarn" class="splitwarn" style="display:none"></div>
+
+<div class="chartcard" id="chartcard" style="display:none">
+  <div class="cap">입력한 종가 흐름 (교육용 형태 비교)</div>
+  <p class="tickermeta" id="tickermeta" style="display:none"></p>
+  <p class="vbadge" id="vbadge" style="display:none"></p>
+  <canvas id="chart" width="480" height="150"></canvas>
+</div>
+
+<p class="note-notprob" id="notprob" style="display:none">유사도는 학습용 형태 닮음 점수입니다. 상승·하락 확률이 아닙니다.</p>
+
+<div class="matchhead" id="mhead" style="display:none">닮은 패턴 TOP 3</div>
+<div class="lowsim" id="lowsim" style="display:none">아직 특정 패턴이 뚜렷하지 않은 흐름입니다. 형태가 더 뚜렷해져야 어느 패턴인지 말할 수 있어, 지금 순위는 참고로만 보세요.</div>
+<div id="matches"></div>
+
+<div id="howto" class="howto-overlay" style="display:none" onclick="if(event.target===this)this.style.display='none'">
+  <div class="howto-box">
+    <div class="howto-head">인베스팅닷컴 과거 데이터 가져오기
+      <button type="button" class="howto-x" onclick="document.getElementById('howto').style.display='none'">✕</button>
+    </div>
+    <svg class="howto-img" viewBox="0 0 300 200" role="img" aria-label="인베스팅닷컴 과거 데이터 화면 예시">
+      <rect x="0" y="0" width="300" height="200" rx="8" fill="#F4F6FB"/>
+      <text x="12" y="20" font-size="11" font-weight="700" fill="#1B2436">테슬라</text>
+      <text x="70" y="20" font-size="11" font-weight="700" fill="#1B2436">393.45</text>
+      <text x="120" y="20" font-size="10" fill="#2E7DF0">-7.49%</text>
+      <line x1="0" y1="30" x2="300" y2="30" stroke="#E1E6EF"/>
+      <text x="12" y="46" font-size="9" fill="#8A96AC">일반</text>
+      <text x="42" y="46" font-size="9" fill="#8A96AC">차트</text>
+      <text x="78" y="46" font-size="9" fill="#2E7DF0" font-weight="700">과거 데이터</text>
+      <text x="150" y="46" font-size="9" fill="#8A96AC">과거 액면분할</text>
+      <line x1="78" y1="50" x2="128" y2="50" stroke="#2E7DF0" stroke-width="2"/>
+      <text x="12" y="72" font-size="12" font-weight="800" fill="#1B2436">TSLA 과거 데이터</text>
+      <rect x="12" y="82" width="276" height="20" rx="4" fill="#fff" stroke="#E1E6EF"/>
+      <text x="20" y="95" font-size="8" fill="#5A6B84">2026-06-04  -  2026-07-06</text>
+      <line x1="12" y1="112" x2="288" y2="112" stroke="#E1E6EF"/>
+      <text x="16" y="124" font-size="8" font-weight="700" fill="#5A6B84">날짜</text>
+      <text x="150" y="124" font-size="8" font-weight="700" fill="#5A6B84">종가</text>
+      <text x="215" y="124" font-size="8" font-weight="700" fill="#5A6B84">시가</text>
+      <rect x="12" y="130" width="276" height="60" fill="#DBE9FF" opacity="0.5"/>
+      <text x="16" y="143" font-size="8" fill="#1B2436">2026년 07월 02일</text>
+      <text x="150" y="143" font-size="8" fill="#2E7DF0">393.45</text>
+      <text x="215" y="143" font-size="8" fill="#1B2436">428.01</text>
+      <text x="16" y="158" font-size="8" fill="#1B2436">2026년 07월 01일</text>
+      <text x="150" y="158" font-size="8" fill="#D64550">425.30</text>
+      <text x="215" y="158" font-size="8" fill="#1B2436">421.46</text>
+      <text x="16" y="173" font-size="8" fill="#1B2436">2026년 06월 30일</text>
+      <text x="150" y="173" font-size="8" fill="#D64550">420.60</text>
+      <text x="215" y="173" font-size="8" fill="#1B2436">406.00</text>
+      <text x="16" y="188" font-size="8" fill="#1B2436">2026년 06월 29일</text>
+      <text x="150" y="188" font-size="8" fill="#D64550">411.84</text>
+      <text x="215" y="188" font-size="8" fill="#1B2436">381.79</text>
+    </svg>
+    <ol class="howto-steps">
+      <li>인베스팅닷컴 검색창에 종목 티커를 입력합니다. <span class="howto-eg">(예: 테슬라 → TSLA)</span></li>
+      <li>종목 페이지에서 <b>일반 → 과거 데이터</b> 탭으로 이동합니다.</li>
+      <li>표에서 <b>날짜·종가·시가</b> 등을 원하는 기간까지 드래그해 복사합니다.</li>
+      <li>여기 붙여넣기 탭에 <b>티커(예: TSLA)</b>를 쓰고, 복사한 데이터를 아래 칸에 붙여넣습니다.</li>
+    </ol>
+    <p class="howto-note">인베스팅 자료 붙여넣기는 반드시 티커와 함께 입력하세요.</p>
+    <button type="button" class="howto-close" onclick="document.getElementById('howto').style.display='none'">닫기</button>
+  </div>
+</div>
+
+</main>
+<div id="f29-footer"></div>
+
+<script src="data/patterns/patterns-bundle.js"></script>
+<script src="js/tokens.js"></script>
+<script src="js/match-engine.js"></script>
+<script src="js/portal-chrome.js"></script>
+<script>
+var F=window.F29, ME=F.MatchEngine, col=F.col;
+var byId=F.PATTERN_BUNDLE||{};
+var lastOHLCV=null;   // 붙여넣기 OHLCV 보존 (다음 단계 품질 레이어용). 매칭엔 종가만 사용.
+function switchTab(which){
+  var t1=document.getElementById("tab-ticker"), t2=document.getElementById("tab-paste");
+  var p1=document.getElementById("pane-ticker"), p2=document.getElementById("pane-paste");
+  var on=(which==="ticker");
+  t1.classList.toggle("on",on); t2.classList.toggle("on",!on);
+  p1.style.display=on?"":"none"; p2.style.display=on?"none":"";
+}
+
+var SAMPLES={
+  rise:[100,103,106,105,108,111,110,113,116,115,118,121,120,123,126,125,128,131,130,133,136,135,138,141],
+  box:[100,104,99,103,98,102,100,104,99,103,98,102,101,104,99,103,98,102,100,104,99,103,98,102,100],
+  peaks:[100,105,110,108,113,118,122,117,113,116,120,124,119,114,117,120,116,113,110,107,109,106,103,100,97],
+  wbottom:[124,116,108,100,104,110,114,111,106,101,105,111,116,120,124,128]
+};
+function pick(k){ document.getElementById("closes").value=SAMPLES[k].join(", "); run(null,"sample"); }
+
+// 종목명↔티커 별칭 매핑 (종목명 입력 지원). 로드 실패해도 티커 입력은 정상 작동.
+var F29_ALIASES={};
+fetch("data/aliases.json",{cache:"no-store"}).then(function(r){return r.ok?r.json():null;}).then(function(d){if(d&&d.aliases)F29_ALIASES=d.aliases;}).catch(function(){});
+// 입력(종목명 또는 티커)을 티커/코드로 변환. 별칭에 있으면 매핑, 없으면 정제해 티커로 간주.
+function resolveSymbol(raw){
+  var s=(raw||"").trim();
+  if(!s) return "";
+  var key=s.toLowerCase().replace(/\s+/g,"");           // "삼성 전자"→"삼성전자", 대소문자 무시
+  if(F29_ALIASES[key]) return F29_ALIASES[key];          // 종목명 매핑 히트
+  return s.toUpperCase().replace(/[^A-Z0-9.\-]/g,"");    // 티커로 간주 (한글 등 제거)
+}
+
+// 종목 코드로 데이터 경로 결정 (시장 분리). 6자리 숫자=한국 → kr/, 그 외=미국.
+function closesPath(sym){
+  return /^\d{6}$/.test(sym) ? "data/closes/kr/"+sym+".json" : "data/closes/"+sym+".json";
+}
+
+async function runTicker(){
+  var err=document.getElementById("err");
+  var t=resolveSymbol(document.getElementById("ticker").value);
+  if(!t){ err.style.display="block"; err.textContent="종목명 또는 티커를 입력하세요."; return; }
+  err.style.display="none";
+  try{
+    var res=await fetch(closesPath(t),{cache:"no-store"});
+    if(res.status===404) throw new Error("notfound");
+    if(!res.ok) throw new Error("http "+res.status);
+    var d=await res.json();
+    if(!Array.isArray(d.closes)||d.closes.length<8) throw new Error("baddata");
+    document.getElementById("closes").value=d.closes.join(", ");
+    run(d,"ticker");
+  }catch(e){
+    document.getElementById("chartcard").style.display="none";
+    document.getElementById("notprob").style.display="none";
+    document.getElementById("mhead").style.display="none";
+    var _low=document.getElementById("lowsim"); if(_low)_low.style.display="none";
+    document.getElementById("matches").innerHTML="";
+    err.style.display="block";
+    err.textContent = e.message==="notfound"
+      ? t+" 는 아직 준비된 종목이 아닙니다. 조회가 쌓이면 다음 갱신에 추가됩니다. (지금은 종가 직접 입력으로 확인하세요)"
+      : "종가 데이터를 불러오지 못했습니다.";
+  }
+}
+
+function drawChart(seq){
+  var cv=document.getElementById("chart"),ctx=cv.getContext("2d");
+  var W=cv.width,H=cv.height,pad=10;
+  ctx.clearRect(0,0,W,H);
+  var mn=Math.min.apply(null,seq),mx=Math.max.apply(null,seq),d=(mx-mn)||1;
+  var x=function(i){return pad+(W-2*pad)*i/(seq.length-1);};
+  var y=function(v){return pad+(H-2*pad)*(1-(v-mn)/d);};
+  var g=ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,"rgba(61,216,176,.18)");g.addColorStop(1,"rgba(61,216,176,0)");
+  ctx.beginPath();ctx.moveTo(x(0),y(seq[0]));
+  for(var i=1;i<seq.length;i++)ctx.lineTo(x(i),y(seq[i]));
+  ctx.lineTo(x(seq.length-1),H-pad);ctx.lineTo(x(0),H-pad);ctx.closePath();
+  ctx.fillStyle=g;ctx.fill();
+  ctx.beginPath();ctx.moveTo(x(0),y(seq[0]));
+  for(var i=1;i<seq.length;i++)ctx.lineTo(x(i),y(seq[i]));
+  ctx.strokeStyle="#3DD8B0";ctx.lineWidth=2;ctx.lineJoin="round";ctx.stroke();
+}
+
+function renderMatches(list){
+  var box=document.getElementById("matches");
+  // 저커버(top1 유사도 < 65): 특정 패턴이 뚜렷하지 않은 흐름 안내 배너
+  var low=document.getElementById("lowsim");
+  if(low) low.style.display=(list[0]&&list[0].score<65)?"":"none";
+  var SLABEL={near:"확정 조건 근접",watch:"확인 필요",weak:"정석 구조 약함",limited:"구조 확인 제한"};
+  var SCOL={near:"var(--up)",watch:"var(--gold)",weak:"var(--down)",limited:"var(--txt3)"};
+  box.innerHTML=list.map(function(m,i){
+    var c=col(m.tagColor||"teal");
+    var rows='<div class="row"><span class="rk">닮은 점</span><span class="rv">'+m.similar+'</span></div>'+
+             '<div class="row"><span class="rk">부족 조건</span><span class="rv">'+m.missing+'</span></div>';
+    var struct=m.structure?'<div class="struct" style="border-color:'+SCOL[m.structure.status]+'"><span class="struct-t" style="color:'+SCOL[m.structure.status]+'">구조 확인 · '+SLABEL[m.structure.status]+'</span><span class="struct-d">'+m.structure.text+'</span></div>':'';
+    var VCOL={confirm:"var(--up)",weak:"var(--down)",neutral:"var(--txt3)",building:"var(--gold)"};
+    var VLABEL={confirm:"거래량 실림",weak:"거래량 부족",neutral:"거래량 보통",building:"거래량 증가 중"};
+    var vol=m.volume?'<div class="struct" style="border-color:'+VCOL[m.volume.vstatus]+'"><span class="struct-t" style="color:'+VCOL[m.volume.vstatus]+'">거래량 확인 · '+VLABEL[m.volume.vstatus]+'</span><span class="struct-d">'+m.volume.text+'</span></div>':'';
+    var warn=m.misread?'<div class="warn">착각 주의 · '+m.misread+'</div>':'';
+    return '<div class="match"><div class="ac" style="background:'+c+'"></div>'+
+      '<div class="top"><span class="rank">'+(i+1)+'</span><span class="pname">'+m.title+'</span>'+
+      '<span class="sim" style="color:'+c+'">'+m.score+'<span class="simlabel">유사</span></span></div>'+
+      rows+struct+vol+warn+
+      '<a class="lablink" href="index.html?p='+m.id+'">Pattern Lab에서 이 패턴 배우기 →</a></div>';
+  }).join("");
+}
+
+async function run(tickerData, source){
+  var err=document.getElementById("err");
+  var parsed=ME.parseTable(document.getElementById("closes").value);   // 표면 OHLCV, 아니면 종가 목록
+  var closes=parsed.closes;
+  lastOHLCV = parsed.hadTable ? parsed.ohlcv : null;                    // OHLCV 보존(매칭엔 종가만)
+  if(closes.length<8){
+    err.style.display="block";
+    if(parsed.datesDetected && parsed.count===0)
+      err.textContent="가격 데이터를 읽지 못했습니다. 인베스팅닷컴 과거 데이터 표(날짜·종가·시가·고가·저가·거래량)를 그대로 다시 붙여넣어 주세요.";
+    else if(closes.length===0)
+      err.textContent="가격 데이터를 찾지 못했습니다. 종가 숫자 또는 인베스팅닷컴 과거 데이터 표를 붙여넣어 주세요.";
+    else
+      err.textContent="최소 15개 이상의 일봉 데이터가 필요합니다. 30개 이상이면 더 안정적으로 비교할 수 있습니다.";
+    return;
+  }
+  if(parsed.truncated){
+    err.style.display="block"; err.textContent="입력이 너무 길어 앞부분만 사용했습니다. 최근 60개 정도면 충분합니다.";
+  }else if(closes.length<15){
+    err.style.display="block"; err.textContent="데이터가 조금 부족합니다("+closes.length+"개). 15개 이상(권장 30개+)이면 더 안정적입니다.";
+  }else{ err.style.display="none"; }
+
+  // 분할·수정주가·오류 의심 갭 경고 (전일 대비 35%+)
+  var gaps=ME.detectSplits(closes);
+  var warnEl=document.getElementById("splitwarn");
+  if(gaps>0){ warnEl.style.display=""; warnEl.textContent="비정상적으로 큰 가격 차이가 감지되었습니다("+gaps+"곳). 액면분할·수정주가 차이 또는 잘못된 데이터일 수 있어, 분석 신뢰도가 낮아질 수 있습니다."; }
+  else warnEl.style.display="none";
+
+  var isTicker=!!(tickerData&&tickerData.ticker);
+  var tickerField=resolveSymbol(document.getElementById("pasteTicker").value);
+  // ── 검증 상태 결정 (사용자 입력은 즉시 신뢰하지 않음) ──
+  var verification="anonymous", vDetail=null, vTicker=null;
+  if(isTicker){ verification="verified"; vTicker=tickerData.ticker; }          // 티커 조회 = 서버 데이터 자체
+  else if(parsed.hadTable && tickerField){
+    vTicker=tickerField;
+    try{
+      var res=await fetch(closesPath(tickerField),{cache:"no-store"});
+      if(res.ok){ var sv=await res.json(); vDetail=ME.verifyPaste(parsed.ohlcv, sv); verification=vDetail.status; }
+      else verification="unverified";                                          // 서버에 그 티커 없음
+    }catch(e){ verification="unverified"; }
+  }
+  var inputType=isTicker?"ticker":(parsed.hadTable?(tickerField?"ohlcv_paste_with_ticker":"ohlcv_paste"):(source||"paste"));
+  // match_search: 붙여넣기 원문은 절대 전송하지 않음. 개수·검증상태만.
+  var sp={input_type:inputType, data_length:closes.length, verification_status:verification};
+  if(vTicker) sp.ticker=vTicker;
+  window.F29track&&window.F29track("match_search",sp);
+
+  document.getElementById("chartcard").style.display="";
+  document.getElementById("notprob").style.display="";
+  document.getElementById("mhead").style.display="";
+  var meta=document.getElementById("tickermeta");
+  var badge=document.getElementById("vbadge");
+  if(isTicker){
+    meta.style.display=""; meta.textContent=tickerData.ticker+" · 종가 "+closes.length+"개 · 갱신 "+(tickerData.updated||"-");
+  }else if(parsed.hadTable){
+    meta.style.display=""; meta.textContent="OHLCV 표 "+closes.length+"개 인식 · 종가 흐름 기준 분석 (고저·거래량 보존)";
+  }else{ meta.style.display="none"; }
+  // 신뢰 등급 배지
+  var B={
+    verified:{t:(vTicker||"")+" 서버 데이터와 일치 · 검증됨"+(vDetail?" ("+vDetail.median+"% 차이)":""), c:"var(--up)"},
+    mismatch:{t:"입력 티커와 붙여넣은 가격이 맞지 않습니다 · 익명 분석으로만 처리 (랭킹·개선 반영 제외)", c:"var(--down)"},
+    unverified:{t:(vTicker?vTicker+" ":"")+"서버 검증 전 데이터 · 랭킹·커버리지 개선 미반영", c:"var(--gold)"},
+    anonymous:{t:"티커 미확인 · 익명 차트 분석 (랭킹·커버리지 개선 미반영)", c:"var(--txt3)"}
+  }[verification];
+  if(badge){ badge.style.display=""; badge.textContent="검증 상태 · "+B.t; badge.style.color=B.c; }
+
+  drawChart(closes);
+  // 거래량/대금 확인용 OHLCV: 티커조회=서버데이터(한국 kr/), 붙여넣기=lastOHLCV
+  var ohlcvForVol = (tickerData && Array.isArray(tickerData.ohlcv) && tickerData.ohlcv.length) ? tickerData.ohlcv : lastOHLCV;
+  var matches=ME.matchFlow(closes, byId, 3, ohlcvForVol);
+  renderMatches(matches);
+  if(matches[0]) window.F29track&&window.F29track("match_result_view",{ticker:vTicker||undefined, top_pattern:matches[0].id, top_score:matches[0].score, verification_status:verification});
+}
+
+// 9B: ?ticker= 딥링크 — 프리필 + 조회 자동실행 (기존 조회 함수 재사용, 실패 처리는 기존 경로)
+(function(){
+  var q;
+  try{ q=new URLSearchParams(location.search).get("ticker"); }catch(e){ return; }
+  if(!q||!q.trim()) return;
+  var el=document.getElementById("ticker");
+  if(!el) return;
+  switchTab("ticker");
+  el.value=q.trim();
+  runTicker();
+})();
+</script>
+</body></html>
