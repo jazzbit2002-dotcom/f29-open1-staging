@@ -49,9 +49,13 @@ REGISTRY = {
         "IBIT": {"enabled": True, "kill_switch_active": False,
                  "download_url": "http://example.invalid/ibit",
                  "parser": "ishares_spreadsheetml"},
+        # D3: this suite is about marker/lock/log isolation between two
+        # COMPLETABLE tickers, so GBTC declares a ratified lag here.  The
+        # observation-only path is locked separately in the D3 suite.
         "GBTC": {"enabled": True, "kill_switch_active": False,
                  "download_url": "http://example.invalid/gbtc",
-                 "parser": "grayscale_ooxml"},
+                 "parser": "grayscale_ooxml",
+                 "target_lag_us_business_days": 0},
     }}},
     "freshness": {"max_lag_business_days": 5},
 }
@@ -256,7 +260,9 @@ def test_gbtc_duplicate_recovery_stays_on_gbtc_artefacts(env, monkeypatch):
 
     assert C.main("BTC", "GBTC") == 0         # same digest -> dup branch
     assert os.path.exists(gbtc_done), "dup branch did not restore the marker"
-    assert len(open(gbtc_fs).read().strip().splitlines()) == 2
+    # D3: first_seen is written once per window.  Run 1 already logged it,
+    # so recovering a deleted marker must not append a second line.
+    assert len(open(gbtc_fs).read().strip().splitlines()) == 1
 
     # nothing belonging to IBIT was created or touched
     assert not os.path.exists(str(ledger / "done.json"))
@@ -287,7 +293,8 @@ def test_ibit_duplicate_recovery_uses_the_monkeypatched_globals(env, monkeypatch
 
     assert C.main("BTC", "IBIT") == 0         # same digest -> dup branch
     assert os.path.exists(ibit_done), "dup branch did not restore the marker"
-    assert len(open(ibit_fs).read().strip().splitlines()) == 2
+    assert len(open(ibit_fs).read().strip().splitlines()) == 1   # see above
+
 
     # the derived names must never appear for IBIT
     assert not os.path.exists(str(ledger / "etf_ibit_done.json"))

@@ -1,5 +1,5 @@
 """
-D4 applier contract test - d4_apply.py must fail closed.
+D3 applier contract test - d3_apply.py must fail closed.
 
 The applier rewrites a live driver, so its state detection is the last
 thing standing between a mis-shaped source and a corrupted file.  These
@@ -20,7 +20,7 @@ import sys
 import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-APPLIER = os.path.join(ROOT, "d4_apply.py")
+APPLIER = os.path.join(ROOT, "d3_apply.py")
 DRIVER = os.path.join(ROOT, "scripts", "collect_etf_ibit.py")
 
 
@@ -42,22 +42,13 @@ def _run(tmp_path, *args):
 
 @pytest.fixture
 def pristine():
-    """The pre-D4 driver, reconstructed by reversing the applied patches.
-
-    Patches stack, so they have to be undone newest-first: D3 anchors on
-    D4 output, and reversing D4 alone would leave D3 code referencing
-    helpers that no longer exist.
-    """
+    """The driver with D3 reversed - i.e. the D4-only state that d3_apply
+    is meant to be run against.  D4 is left applied because the D3 hunks
+    anchor on D4 output."""
     sys.path.insert(0, ROOT)
-    import d4_apply
+    import d3_apply
     src = open(DRIVER, encoding="utf-8").read()
-    try:
-        import d3_apply
-        for _label, _expect, old, new in reversed(d3_apply.HUNKS):
-            src = src.replace(new, old)
-    except ImportError:
-        pass
-    for _label, _expect, old, new in reversed(d4_apply.HUNKS):
+    for _label, _expect, old, new in reversed(d3_apply.HUNKS):
         src = src.replace(new, old)
     return src
 
@@ -91,8 +82,9 @@ def test_mixed_state_aborts_without_writing(tmp_path, pristine):
     assert _run(tmp_path).returncode == 0
     patched = target.read_text()
 
-    stray = ('\n\ndef _write_done(window_date: str, expected_issuer_as_of: str, '
-             'as_of: str, digest: str):\n    pass\n')
+    stray = ('\n\ndef _d3_stray(latest, expected):\n'
+             '    if True:\n'
+             '        target_reached = latest >= expected\n')
     target.write_text(patched + stray, encoding="utf-8")
     before = _sha(str(target))
 
@@ -106,13 +98,13 @@ def test_partial_apply_aborts_without_writing(tmp_path, pristine):
     """Half-applied source: one hunk reverted on an otherwise patched
     file."""
     sys.path.insert(0, ROOT)
-    import d4_apply
+    import d3_apply
     target = _stage(tmp_path, pristine)
     assert _run(tmp_path).returncode == 0
     patched = target.read_text()
 
-    label, expect, old, new = [h for h in d4_apply.HUNKS
-                               if h[0] == "lock file"][0]
+    label, expect, old, new = [h for h in d3_apply.HUNKS
+                               if h[0] == "store branch respects observation_only"][0]
     target.write_text(patched.replace(new, old), encoding="utf-8")
     before = _sha(str(target))
 
@@ -128,7 +120,8 @@ def test_duplicated_hunk_aborts(tmp_path, pristine):
     assert _run(tmp_path).returncode == 0
     patched = target.read_text()
     target.write_text(
-        patched + '\n\n    lock_fd = open(lockfile, "w")\n', encoding="utf-8")
+        patched + '\n\n        target_reached = (not observation_only) and latest >= expected\n',
+        encoding="utf-8")
     before = _sha(str(target))
 
     r = _run(tmp_path)
@@ -164,9 +157,9 @@ def test_malformed_generated_source_is_not_written(tmp_path, pristine):
     target = _stage(tmp_path, pristine)
     before = _sha(str(target))
 
-    broken = tmp_path / "d4_apply_broken.py"
+    broken = tmp_path / "d3_apply_broken.py"
     src = open(APPLIER, encoding="utf-8").read()
-    marker = '_LEGACY_TICKER = "IBIT"'
+    marker = 'def _target_lag_for(ticker, meta):'
     assert marker in src
     broken.write_text(src.replace(marker, '_LEGACY_TICKER = "IBIT\n'),
                       encoding="utf-8")
