@@ -78,15 +78,24 @@ def main():
     print("sha256 : %s" % before)
     print()
 
-    applied, already = 0, 0
+    applied = already = 0
     for label, old, new in HUNKS:
+        expect = 1
         n_old, n_new = src.count(old), src.count(new)
-        if n_old == 0 and n_new >= 1:
+        # Some hunks append after their anchor, so the patched text still
+        # contains the unpatched text.  Account for that, then admit only
+        # two clean states - anything else (partial apply, mixed source,
+        # duplicated block, upstream drift) aborts before any write.
+        embedded_old = expect if old in new else 0
+        if n_new == expect and n_old == embedded_old:
             print("  NOOP  %s (already applied)" % label)
             already += 1
             continue
-        if n_old != 1:
-            sys.exit("  ABORT %s: expected 1 match, found %d" % (label, n_old))
+        if not (n_new == 0 and n_old == expect):
+            sys.exit("  ABORT %s: mixed or unexpected state "
+                     "(old=%d, new=%d, expected old=%d/new=0 or "
+                     "old=%d/new=%d)"
+                     % (label, n_old, n_new, expect, embedded_old, expect))
         src = src.replace(old, new)
         applied += 1
         print("  OK    %s" % label)

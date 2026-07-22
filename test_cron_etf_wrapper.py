@@ -87,8 +87,10 @@ def test_log_path_and_args_follow_d4_1(tmp_path):
 def test_ibit_wrapper_is_untouched():
     """D4-4: cron_ibit.sh keeps its own hard-coded names."""
     ibit = os.path.join(BASE, "scripts", "cron_ibit.sh")
-    if not os.path.isfile(ibit):
-        pytest.skip("cron_ibit.sh not present in this checkout")
+    # Asserted, not skipped: a missing cron_ibit.sh would itself be a
+    # D4-4 contract breach ("existing IBIT wiring unchanged"), and a skip
+    # would hide it behind a green run.
+    assert os.path.isfile(ibit), "cron_ibit.sh must remain in place: %s" % ibit
     src = open(ibit).read()
     assert "ledger/cron_ibit.log" in src
     assert "--ticker IBIT" in src
