@@ -190,6 +190,27 @@ def test_explicit_none_is_observation_only(env, monkeypatch):
     assert not os.path.exists(str(ledger / "etf_nulled_done.json"))
 
 
+# ------------------------------------------- U.S. business-day boundary
+@pytest.mark.parametrize("window,lag,expected", [
+    # 2026-07-03 is the observed holiday for Saturday the 4th, and the 4th
+    # and 5th are the weekend - so a Monday window steps back to Thursday.
+    ("2026-07-06", 0, "2026-07-02"),
+    ("2026-07-20", 0, "2026-07-17"),      # Monday -> Friday
+    ("2026-07-17", 0, "2026-07-16"),      # plain weekday
+    # Discriminating cases: the SECOND step is the one that has to cross a
+    # non-business stretch.  Subtracting calendar days after a single
+    # prev_us_business_day() call would land on 07-05 (Sunday) and 07-18
+    # (Saturday) respectively.
+    ("2026-07-07", 1, "2026-07-02"),
+    ("2026-07-21", 2, "2026-07-16"),
+])
+def test_expected_as_of_crosses_holidays_and_weekends(window, lag, expected):
+    """Locks the per-issuer helper itself, not just the calendar it calls:
+    every lag step has to go through prev_us_business_day, or a multi-day
+    lag would skip a holiday it should have stepped over."""
+    assert C._expected_as_of(window, lag) == expected
+
+
 # ---------------------------------------------------------- 6  validation
 @pytest.mark.parametrize("bad", ["0", 0.0, True, False, -1, "one", [], 1.5])
 def test_invalid_lag_values_are_rejected(bad):
