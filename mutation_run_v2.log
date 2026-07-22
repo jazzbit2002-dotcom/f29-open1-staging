@@ -1,0 +1,20 @@
+BASELINE            rc=0  75 passed in 0.99s
+N1  S2 lag-key enforcement removed                   anchor_count=1  rc=1  1 failed, 74 passed in 0.52s OK
+N2  S3 delegated value error not reported            anchor_count=1  rc=1  4 failed, 71 passed in 0.54s OK
+N3  S6 parser cross-check removed                    anchor_count=1  rc=1  1 failed, 74 passed in 0.47s OK
+N4  T1 conditions disabled wholesale                 anchor_count=1  rc=1  7 failed, 68 passed in 0.55s OK
+N5  materialization exempted by ticker name          anchor_count=1  rc=1  4 failed, 71 passed in 0.53s OK
+N6  T2 marker-expected comparison removed            anchor_count=1  rc=1  2 failed, 73 passed in 0.50s OK
+N7  T1 marker-absence condition removed              anchor_count=1  rc=1  1 failed, 74 passed in 0.51s OK
+N8  S7 mapping_promotion validation removed          anchor_count=1  rc=1  8 failed, 67 passed in 0.63s OK
+N10 only LEDGER rebound (IBIT globals left operational) anchor_count=1  rc=1  3 failed, 72 passed in 0.55s OK
+N11 finally restoration removed                      anchor_count=1  rc=1  3 failed, 72 passed in 0.55s OK
+N12a bool check reduced to truthiness                anchor_count=1  rc=1  7 failed, 68 passed in 0.62s OK
+N12b int check accepts bool                          anchor_count=1  rc=1  3 failed, 72 passed in 0.55s OK
+N13 sys.dont_write_bytecode removed                  anchor_count=1  rc=1  1 failed, 74 passed in 0.54s OK
+N16 current enabled bool guard removed               anchor_count=1  rc=1  2 failed, 73 passed in 0.57s OK
+N17 current lag error not reported                   anchor_count=1  rc=1  1 failed, 74 passed in 0.54s OK
+N18 candidate structure guard removed                anchor_count=1  rc=1  1 failed, 74 passed in 0.55s OK
+N19 current structure guard removed                  anchor_count=1  rc=1  1 failed, 74 passed in 0.62s OK
+N14 lockfile opened for write                        anchor_count=1  rc=1  2 failed, 73 passed in 0.57s OK
+RESTORED            rc=0  75 passed in 0.53s
