@@ -33,22 +33,43 @@ from collectors import etf_issuer as E
 import scripts.collect_etf_ibit as C
 
 SCHEMA = """
-CREATE TABLE etf_daily (asset TEXT, ticker TEXT, issuer_as_of_date TEXT,
-  effective_trade_date TEXT, delta_shares REAL, nav_per_share REAL,
-  est_creation_usd REAL, source_id TEXT, input_digest TEXT,
-  first_seen_at TEXT, last_seen_at TEXT, persistence_mode TEXT,
-  alignment_status TEXT, PRIMARY KEY (asset, ticker, issuer_as_of_date));
-CREATE TABLE etf_daily_revisions (asset TEXT, ticker TEXT,
-  issuer_as_of_date TEXT, delta_shares REAL, nav_per_share REAL,
-  est_creation_usd REAL, source_revision_digest TEXT, seen_at TEXT,
-  PRIMARY KEY (asset, ticker, issuer_as_of_date, source_revision_digest));
-CREATE TABLE etf_collect_log (source_id TEXT, input_digest TEXT,
-  processed_at TEXT, rows_added INT, revisions_added INT,
-  window_date_kst TEXT, latest_as_of TEXT, completed INT);
-CREATE TABLE source_health (source_id TEXT PRIMARY KEY, last_success_at TEXT,
-  last_status TEXT, consecutive_failures INT);
-CREATE TABLE pipeline_runs (run_id TEXT, started_at TEXT, finished_at TEXT,
-  step TEXT, status TEXT, notes TEXT);
+-- Verbatim from the production sqlite_master (2026-07-22).  Do not
+-- hand-write this: etf_collect_log carries PRIMARY KEY
+-- (source_id, input_digest), and a replica without it silently
+-- validates designs the real database rejects.
+CREATE TABLE etf_daily (
+  asset TEXT NOT NULL, ticker TEXT NOT NULL,
+  issuer_as_of_date TEXT NOT NULL,
+  effective_trade_date TEXT,
+  delta_shares REAL, nav_per_share REAL, est_creation_usd REAL,
+  source_id TEXT, input_digest TEXT,
+  first_seen_at TEXT, last_seen_at TEXT,
+  persistence_mode TEXT,
+  alignment_status TEXT DEFAULT 'provisional',
+  PRIMARY KEY (asset, ticker, issuer_as_of_date)
+);
+CREATE TABLE etf_daily_revisions (
+  asset TEXT NOT NULL, ticker TEXT NOT NULL, issuer_as_of_date TEXT NOT NULL,
+  delta_shares REAL, nav_per_share REAL, est_creation_usd REAL,
+  source_revision_digest TEXT NOT NULL, seen_at TEXT,
+  PRIMARY KEY (asset, ticker, issuer_as_of_date, source_revision_digest)
+);
+CREATE TABLE etf_collect_log (
+  source_id TEXT NOT NULL, input_digest TEXT NOT NULL,
+  processed_at TEXT, rows_added INTEGER, revisions_added INTEGER,
+  window_date_kst TEXT, latest_as_of TEXT,
+  completed INTEGER DEFAULT 0,
+  PRIMARY KEY (source_id, input_digest)
+);
+CREATE TABLE source_health (
+  source_id TEXT PRIMARY KEY,
+  last_success_at TEXT, last_status TEXT, consecutive_failures INTEGER DEFAULT 0,
+  kill_switch_active INTEGER DEFAULT 0, rights_status TEXT, owner_override TEXT
+);
+CREATE TABLE pipeline_runs (
+  run_id TEXT PRIMARY KEY, started_at TEXT, finished_at TEXT,
+  step TEXT, status TEXT, notes TEXT
+);
 """
 
 
@@ -194,50 +215,114 @@ def test_invalid_lag_fails_before_any_fetch(bad, env, monkeypatch, tmp_path):
     assert not os.path.exists(str(ledger / "etf_badlag_done.json"))
 
 
-# ---------------------------------------------------------- 7-8  observation
+
+
+# ------------------------------------------------- observation-only (A-safe)
+def _log_rows(tmp, ticker):
+    """Ordered by digest, not by processed_at: two rows written in the same
+    second would otherwise come back in an undefined order."""
+    con = sqlite3.connect(str(tmp / "core.sqlite"))
+    rows = list(con.execute(
+        "SELECT window_date_kst, latest_as_of, rows_added, revisions_added, "
+        "completed FROM etf_collect_log WHERE source_id=? ORDER BY input_digest",
+        ("etf_issuer_%s" % ticker.lower(),)))
+    con.close()
+    return rows
+
+
+def _log_row(tmp, ticker, digest):
+    """The single row for one digest - collect_log is keyed on it."""
+    con = sqlite3.connect(str(tmp / "core.sqlite"))
+    row = con.execute(
+        "SELECT window_date_kst, latest_as_of, rows_added, revisions_added, "
+        "completed FROM etf_collect_log WHERE source_id=? AND input_digest=?",
+        ("etf_issuer_%s" % ticker.lower(), digest)).fetchone()
+    con.close()
+    return row
+
+
+def _runs(tmp, ticker, status=None):
+    con = sqlite3.connect(str(tmp / "core.sqlite"))
+    q, a = "SELECT status, notes FROM pipeline_runs WHERE step=?", \
+           ["etf_%s" % ticker.lower()]
+    if status:
+        q += " AND status=?"
+        a.append(status)
+    rows = list(con.execute(q, a))
+    con.close()
+    return rows
+
+
+def _ratify(tmp, ticker, lag):
+    """Flip an issuer from observation-only to ratified, as D5 would."""
+    reg = json.loads((tmp / "registry.json").read_text())
+    reg["assets"]["BTC"]["issuers"][ticker]["target_lag_us_business_days"] = lag
+    (tmp / "registry.json").write_text(json.dumps(reg))
+
+
 def test_observation_only_fresh_stores_but_marks_nothing(env, monkeypatch):
+    """A new digest still leaves its first-observation row - that row IS the
+    lag sample.  Nothing claims completion."""
     tmp, ledger = env
     monkeypatch.setattr(E, "poll_and_collect", _poll("2026-07-16", "digO"))
     assert C.main("BTC", "OBSV") == 0
 
-    daily, log = _counts(tmp, "OBSV")
+    daily, _ = _counts(tmp, "OBSV")
     assert daily == 2, "canonical rows must still be written"
-    assert log == 1, "collect_log must still record the observation"
+    rows = _log_rows(tmp, "OBSV")
+    assert len(rows) == 1
+    assert rows[0] == ("2026-07-17", "2026-07-16", 2, 0, 0), \
+        "first-observation row must carry its window, as_of and completed=0"
 
     assert not os.path.exists(str(ledger / "etf_obsv_done.json"))
     assert _fs_lines(str(ledger / "obsv_first_seen.log")) == 0
     assert not os.path.exists(str(ledger / "done.json"))
     assert _fs_lines(str(ledger / "fs.log")) == 0
 
-    con = sqlite3.connect(str(tmp / "core.sqlite"))
-    assert con.execute(
-        "SELECT completed FROM etf_collect_log WHERE source_id='etf_issuer_obsv'"
-    ).fetchone()[0] == 0
-    con.close()
 
-
-def test_observation_only_duplicate_marks_nothing(env, monkeypatch):
+def test_observation_only_same_digest_same_window_is_a_noop(env, monkeypatch):
     tmp, ledger = env
     monkeypatch.setattr(E, "poll_and_collect", _poll("2026-07-16", "digO"))
+    C.main("BTC", "OBSV")
+    before = _log_rows(tmp, "OBSV")
+
     assert C.main("BTC", "OBSV") == 0
-    before = _fs_lines(str(ledger / "obsv_first_seen.log"))
-
-    assert C.main("BTC", "OBSV") == 0          # same digest -> dup branch
-    daily, log = _counts(tmp, "OBSV")
-    assert (daily, log) == (2, 1), "duplicate must not double-write"
+    assert _log_rows(tmp, "OBSV") == before, "collect_log was touched"
     assert not os.path.exists(str(ledger / "etf_obsv_done.json"))
-    assert _fs_lines(str(ledger / "obsv_first_seen.log")) == before == 0
+    assert _fs_lines(str(ledger / "obsv_first_seen.log")) == 0
 
-    con = sqlite3.connect(str(tmp / "core.sqlite"))
-    noop = [r[0] for r in con.execute(
-        "SELECT status FROM pipeline_runs WHERE step='etf_obsv'")]
-    assert "NOOP" in noop, "duplicate path did not run"
-    con.close()
+
+def test_observation_only_same_digest_new_window_is_a_noop(env, monkeypatch):
+    """collect_log is keyed (source_id, input_digest): an unchanged file in a
+    later window is not a new lag sample and must not be recorded."""
+    tmp, ledger = env
+    monkeypatch.setattr(E, "poll_and_collect", _poll("2026-07-16", "digO"))
+    C.main("BTC", "OBSV")
+    before = _log_rows(tmp, "OBSV")
+
+    for w in ("2026-07-18", "2026-07-20", "2026-07-21"):
+        monkeypatch.setattr(C, "_kst_window_date", lambda now_utc=None, _w=w: _w)
+        assert C.main("BTC", "OBSV") == 0
+
+    assert _log_rows(tmp, "OBSV") == before, "a later window added or rewrote a row"
+    assert not os.path.exists(str(ledger / "etf_obsv_done.json"))
+    assert _fs_lines(str(ledger / "obsv_first_seen.log")) == 0
+
+
+def test_liveness_is_recorded_in_pipeline_runs(env, monkeypatch):
+    """Execution liveness lives in pipeline_runs, not collect_log."""
+    tmp, ledger = env
+    monkeypatch.setattr(E, "poll_and_collect", _poll("2026-07-16", "digO"))
+    C.main("BTC", "OBSV")
+    monkeypatch.setattr(C, "_kst_window_date", lambda now_utc=None: "2026-07-18")
+    C.main("BTC", "OBSV")
+
+    noops = _runs(tmp, "OBSV", "NOOP")
+    assert len(noops) == 1, "the duplicate run left no liveness evidence"
+    assert "observation_only=True" in noops[0][1]
 
 
 def test_observation_only_never_reaches_write_done(env, monkeypatch):
-    """Belt and braces: no code path may call _write_done for an
-    unratified issuer, marker recovery included."""
     tmp, ledger = env
     calls = []
     real = C._write_done
@@ -249,12 +334,12 @@ def test_observation_only_never_reaches_write_done(env, monkeypatch):
     assert calls == []
 
 
-# ---------------------------------------------------------- 9-10  targets
+# ------------------------------------------------- ratification takes effect
 def test_ratified_issuer_below_target_writes_no_marker(env, monkeypatch):
     tmp, ledger = env
     monkeypatch.setattr(E, "poll_and_collect", _poll("2026-07-15", "digBelow"))
     assert C.main("BTC", "GBTC") == 0          # target is 07-16
-    daily, log = _counts(tmp, "GBTC")
+    daily, _ = _counts(tmp, "GBTC")
     assert daily == 2, "below-target data is still stored"
     assert not os.path.exists(str(ledger / "etf_gbtc_done.json"))
     assert _fs_lines(str(ledger / "gbtc_first_seen.log")) == 0
@@ -269,338 +354,119 @@ def test_ratified_issuer_at_target_writes_marker(env, monkeypatch):
     marker = json.loads(open(str(ledger / "etf_gbtc_done.json")).read())
     assert marker["expected_issuer_as_of"] == "2026-07-16"
     assert _fs_lines(str(ledger / "gbtc_first_seen.log")) == 1
+    assert _log_row(tmp, "GBTC", "digBelow")[4] == 0
+    assert _log_row(tmp, "GBTC", "digTarget")[4] == 1
 
 
-# ---------------------------------------------------------- 11  B-16 recovery
-def test_ratified_issuer_recovers_marker_after_crash(env, monkeypatch):
-    """B-16: canonical committed, collect_log missing, marker missing.
-    A re-run must store idempotently and then complete the window."""
+def test_ratification_does_not_promote_an_observation_row(env, monkeypatch):
+    """A-safe: the unratified row keeps completed=0 and its first window.
+    Promoting it in place would make crash recovery and holiday reuse
+    indistinguishable, so ratification waits for the next new digest."""
     tmp, ledger = env
-    con = sqlite3.connect(str(tmp / "core.sqlite"))
-    C.store_new_and_revisions(con, "BTC", "GBTC", "etf_issuer_gbtc",
-                              "digCrash", "ephemeral_memory",
-                              _series("2026-07-16"))
-    con.close()
+    monkeypatch.setattr(E, "poll_and_collect", _poll("2026-07-16", "digOld"))
+    C.main("BTC", "OBSV")
+    before = _log_rows(tmp, "OBSV")
+    assert before[0][4] == 0
 
-    monkeypatch.setattr(E, "poll_and_collect", _poll("2026-07-16", "digCrash"))
-    assert C.main("BTC", "GBTC") == 0
-    marker = json.loads(open(str(ledger / "etf_gbtc_done.json")).read())
-    assert marker["as_of"] == "2026-07-16"
-    daily, log = _counts(tmp, "GBTC")
-    assert daily == 2, "recovery must be idempotent"
+    _ratify(tmp, "OBSV", 0)
+    assert C.main("BTC", "OBSV") == 0          # same digest, target met
 
-
-# ---------------------------------------------------------- 12  holiday
-def test_holiday_same_digest_keeps_b16_semantics(env, monkeypatch):
-    """A previous window's digest still completes today when it satisfies
-    today's target - the rule that keeps a holiday from re-fetching all
-    day.  Unchanged by D3 for a ratified issuer."""
-    tmp, ledger = env
-    expected = C._expected_as_of("2026-07-17", 0)
-    con = sqlite3.connect(str(tmp / "core.sqlite"))
-    con.execute("INSERT INTO etf_collect_log (source_id, input_digest, "
-                "processed_at, rows_added, revisions_added, window_date_kst, "
-                "latest_as_of, completed) VALUES (?,?,?,?,?,?,?,?)",
-                ("etf_issuer_gbtc", "digHol", "t", 1, 0, "2026-07-16",
-                 expected, 1))
-    con.commit()
-    con.close()
-
-    monkeypatch.setattr(E, "poll_and_collect", _poll(expected, "digHol"))
-    assert C.main("BTC", "GBTC") == 0
-    marker = json.loads(open(str(ledger / "etf_gbtc_done.json")).read())
-    assert marker["window_date_kst"] == "2026-07-17"
-    assert marker["expected_issuer_as_of"] == expected
-    # first_seen was already recorded in the originating window
-    assert _fs_lines(str(ledger / "gbtc_first_seen.log")) == 0
-
-
-def test_ibit_semantics_are_untouched_by_d3(env, monkeypatch):
-    """IBIT has no registry field, so the legacy fallback must reproduce
-    the pre-D3 behaviour exactly."""
-    tmp, ledger = env
-    monkeypatch.setattr(E, "poll_and_collect", _poll("2026-07-16", "digI"))
-    assert C.main("BTC", "IBIT") == 0
-    marker = json.loads(open(str(ledger / "done.json")).read())
-    assert marker["expected_issuer_as_of"] == "2026-07-16"
-    assert marker["as_of"] == "2026-07-16"
-    assert _fs_lines(str(ledger / "fs.log")) == 1
-    assert not os.path.exists(str(ledger / "etf_ibit_done.json"))
-
-
-# ------------------------------------------- observation ledger (new window)
-def _log_rows(tmp, ticker):
-    con = sqlite3.connect(str(tmp / "core.sqlite"))
-    rows = list(con.execute(
-        "SELECT window_date_kst, latest_as_of, rows_added, revisions_added, "
-        "completed FROM etf_collect_log WHERE source_id=? "
-        "ORDER BY processed_at, window_date_kst",
-        ("etf_issuer_%s" % ticker.lower(),)))
-    con.close()
-    return rows
-
-
-def test_observation_new_window_same_digest_adds_one_row(env, monkeypatch):
-    """first_seen stays empty for an unratified issuer, so etf_collect_log
-    is the only promotion evidence.  An unchanged file in a NEW window is
-    still an observation and must be recorded."""
-    tmp, ledger = env
-    monkeypatch.setattr(E, "poll_and_collect", _poll("2026-07-16", "digSame"))
-    assert C.main("BTC", "OBSV") == 0
-    assert len(_log_rows(tmp, "OBSV")) == 1
-
-    monkeypatch.setattr(C, "_kst_window_date", lambda now_utc=None: "2026-07-18")
-    assert C.main("BTC", "OBSV") == 0
-
-    rows = _log_rows(tmp, "OBSV")
-    assert len(rows) == 2, "new window left no observation evidence"
-    second = [r for r in rows if r[0] == "2026-07-18"]
-    assert len(second) == 1
-    win, latest, added, revised, completed = second[0]
-    assert latest == "2026-07-16", "observed as_of must be carried through"
-    assert (added, revised, completed) == (0, 0, 0)
-
-    # canonical untouched, and still no completion artefacts
-    daily, _ = _counts(tmp, "OBSV")
-    assert daily == 2
-    assert not os.path.exists(str(ledger / "etf_obsv_done.json"))
+    assert _log_rows(tmp, "OBSV") == before, "observation row was rewritten"
+    assert not os.path.exists(str(ledger / "etf_obsv_done.json")), \
+        "an unratified-era row must not produce a marker"
     assert _fs_lines(str(ledger / "obsv_first_seen.log")) == 0
+    assert any("completed=0" in n for _s, n in _runs(tmp, "OBSV", "NOOP"))
 
 
-def test_observation_repeat_in_same_new_window_adds_nothing(env, monkeypatch):
-    """One row per window, however many slots poll it."""
+def test_ratification_takes_effect_on_the_next_new_digest(env, monkeypatch):
+    """The post-ratification digest flows through the untouched fresh/store
+    path: ledger commit, then marker, then first_seen."""
     tmp, ledger = env
-    monkeypatch.setattr(E, "poll_and_collect", _poll("2026-07-16", "digSame"))
+    monkeypatch.setattr(E, "poll_and_collect", _poll("2026-07-16", "digOld"))
     C.main("BTC", "OBSV")
-    monkeypatch.setattr(C, "_kst_window_date", lambda now_utc=None: "2026-07-18")
-    C.main("BTC", "OBSV")
+    _ratify(tmp, "OBSV", 0)
+    C.main("BTC", "OBSV")                      # still a no-op
+
+    monkeypatch.setattr(E, "poll_and_collect", _poll("2026-07-16", "digNew"))
+    assert C.main("BTC", "OBSV") == 0
+
     assert len(_log_rows(tmp, "OBSV")) == 2
-
-    for _ in range(3):
-        assert C.main("BTC", "OBSV") == 0
-    assert len(_log_rows(tmp, "OBSV")) == 2, "repeat polling duplicated evidence"
-
-
-def test_observation_holiday_window_same_digest_is_recorded(env, monkeypatch):
-    """A U.S. holiday leaves as_of and digest identical to the previous
-    window; the current window still needs its own observation row."""
-    tmp, ledger = env
-    con = sqlite3.connect(str(tmp / "core.sqlite"))
-    con.execute("INSERT INTO etf_collect_log (source_id, input_digest, "
-                "processed_at, rows_added, revisions_added, window_date_kst, "
-                "latest_as_of, completed) VALUES (?,?,?,?,?,?,?,?)",
-                ("etf_issuer_obsv", "digHol", "2026-07-03T01:00:00Z", 2, 0,
-                 "2026-07-03", "2026-07-02", 0))
-    con.commit()
-    con.close()
-
-    monkeypatch.setattr(C, "_kst_window_date", lambda now_utc=None: "2026-07-06")
-    monkeypatch.setattr(E, "poll_and_collect", _poll("2026-07-02", "digHol"))
-    assert C.main("BTC", "OBSV") == 0
-
-    rows = _log_rows(tmp, "OBSV")
-    assert [r[0] for r in rows] == ["2026-07-03", "2026-07-06"]
-    assert rows[1] == ("2026-07-06", "2026-07-02", 0, 0, 0)
-    assert not os.path.exists(str(ledger / "etf_obsv_done.json"))
-    assert _fs_lines(str(ledger / "obsv_first_seen.log")) == 0
-
-
-def test_ratified_issuer_gets_no_observation_rows(env, monkeypatch):
-    """The observation ledger is an observation-only affordance; a
-    ratified issuer keeps the plain B-5 no-op."""
-    tmp, ledger = env
-    monkeypatch.setattr(E, "poll_and_collect", _poll("2026-07-16", "digR"))
-    C.main("BTC", "GBTC")
-    assert len(_log_rows(tmp, "GBTC")) == 1
-    monkeypatch.setattr(C, "_kst_window_date", lambda now_utc=None: "2026-07-18")
-    C.main("BTC", "GBTC")
-    assert len(_log_rows(tmp, "GBTC")) == 1
-
-
-# ------------------------------------------- observation -> ratified promotion
-def _ratify(tmp, ticker, lag):
-    """Flip an issuer from observation-only to ratified, as D5 would."""
-    reg = json.loads((tmp / "registry.json").read_text())
-    reg["assets"]["BTC"]["issuers"][ticker]["target_lag_us_business_days"] = lag
-    (tmp / "registry.json").write_text(json.dumps(reg))
-
-
-def _accumulate(monkeypatch, windows, digest, latest, ticker="OBSV"):
-    monkeypatch.setattr(E, "poll_and_collect", _poll(latest, digest))
-    for w in windows:
-        monkeypatch.setattr(C, "_kst_window_date", lambda now_utc=None, _w=w: _w)
-        assert C.main("BTC", ticker) == 0
-
-
-def test_promotion_from_observation_completes_once(env, monkeypatch):
-    """The rows an issuer accumulated while unratified survive promotion,
-    so the duplicate branch must aggregate them rather than sample one."""
-    tmp, ledger = env
-    _accumulate(monkeypatch, ["2026-07-17", "2026-07-20", "2026-07-21"],
-                "digProm", "2026-07-21")
-    rows = _log_rows(tmp, "OBSV")
-    assert len(rows) == 3 and all(r[4] == 0 for r in rows)
-    assert not os.path.exists(str(ledger / "etf_obsv_done.json"))
-    assert _fs_lines(str(ledger / "obsv_first_seen.log")) == 0
-
-    _ratify(tmp, "OBSV", 0)
-    monkeypatch.setattr(C, "_kst_window_date", lambda now_utc=None: "2026-07-22")
-    assert C.main("BTC", "OBSV") == 0            # target 07-21, latest 07-21
-
-    marker = json.loads(open(str(ledger / "etf_obsv_done.json")).read())
-    assert marker["window_date_kst"] == "2026-07-22"
-    assert marker["expected_issuer_as_of"] == "2026-07-21"
-    assert _fs_lines(str(ledger / "obsv_first_seen.log")) == 1, \
-        "first ratified completion must log first_seen exactly once"
-
-    rows = _log_rows(tmp, "OBSV")
-    current = [r for r in rows if r[0] == "2026-07-22"]
-    assert len(current) == 1 and current[0][4] == 1, \
-        "current window must be settled as completed"
-    assert all(r[4] == 0 for r in rows if r[0] != "2026-07-22"), \
-        "historical observation rows must stay completed=0"
-
-
-def test_promotion_marker_loss_does_not_duplicate_first_seen(env, monkeypatch):
-    tmp, ledger = env
-    _accumulate(monkeypatch, ["2026-07-17", "2026-07-20", "2026-07-21"],
-                "digProm", "2026-07-21")
-    _ratify(tmp, "OBSV", 0)
-    monkeypatch.setattr(C, "_kst_window_date", lambda now_utc=None: "2026-07-22")
-    C.main("BTC", "OBSV")
-    before_rows = len(_log_rows(tmp, "OBSV"))
+    assert _log_row(tmp, "OBSV", "digOld")[4] == 0, \
+        "the observation row must stay untouched"
+    assert _log_row(tmp, "OBSV", "digNew")[4] == 1, \
+        "the new digest must settle as completed"
+    assert json.loads(open(str(ledger / "etf_obsv_done.json")).read())["as_of"] \
+        == "2026-07-16"
     assert _fs_lines(str(ledger / "obsv_first_seen.log")) == 1
-
-    os.remove(str(ledger / "etf_obsv_done.json"))
-    assert C.main("BTC", "OBSV") == 0
-
-    assert os.path.exists(str(ledger / "etf_obsv_done.json")), "marker not recovered"
-    assert _fs_lines(str(ledger / "obsv_first_seen.log")) == 1, \
-        "marker recovery must not append a second first_seen line"
-    rows = _log_rows(tmp, "OBSV")
-    assert len(rows) == before_rows, "recovery duplicated a collect_log row"
-    assert len([r for r in rows if r[0] == "2026-07-22" and r[4] == 1]) == 1
-
-
-def test_ratified_holiday_with_prior_completion_logs_no_first_seen(env, monkeypatch):
-    """Already-ratified issuer, previous window completed, same digest in a
-    new window: marker only, no first_seen."""
-    tmp, ledger = env
-    monkeypatch.setattr(E, "poll_and_collect", _poll("2026-07-16", "digHol2"))
-    monkeypatch.setattr(C, "_kst_window_date", lambda now_utc=None: "2026-07-17")
-    C.main("BTC", "GBTC")
-    assert _fs_lines(str(ledger / "gbtc_first_seen.log")) == 1
-
-    monkeypatch.setattr(C, "_kst_window_date", lambda now_utc=None: "2026-07-18")
-    # target for 07-18 is 07-17; the file only reaches 07-16, so no marker
-    assert C.main("BTC", "GBTC") == 0
-    assert _fs_lines(str(ledger / "gbtc_first_seen.log")) == 1
-
-    # a Monday window whose target is still 07-16 (07-17 Fri, 07-18/19 weekend)
-    monkeypatch.setattr(C, "_kst_window_date", lambda now_utc=None: "2026-07-17")
-    os.remove(str(ledger / "etf_gbtc_done.json"))
-    assert C.main("BTC", "GBTC") == 0
-    assert os.path.exists(str(ledger / "etf_gbtc_done.json"))
-    assert _fs_lines(str(ledger / "gbtc_first_seen.log")) == 1, \
-        "prior completion means no new first_seen"
-
-
-def test_duplicate_branch_is_row_order_independent(env, monkeypatch):
-    """Same history, different physical insert order -> same outcome."""
-    tmp, ledger = env
-    con = sqlite3.connect(str(tmp / "core.sqlite"))
-    hist = [("2026-07-21", "2026-07-21T05:00:00Z"),
-            ("2026-07-17", "2026-07-17T01:00:00Z"),
-            ("2026-07-20", "2026-07-20T03:00:00Z")]      # deliberately shuffled
-    for win, ts in hist:
-        con.execute("INSERT INTO etf_collect_log (source_id, input_digest, "
-                    "processed_at, rows_added, revisions_added, window_date_kst, "
-                    "latest_as_of, completed) VALUES (?,?,?,0,0,?,?,0)",
-                    ("etf_issuer_obsv", "digOrder", ts, win, "2026-07-21"))
-    con.commit()
-    con.close()
-
-    _ratify(tmp, "OBSV", 0)
-    monkeypatch.setattr(E, "poll_and_collect", _poll("2026-07-21", "digOrder"))
-    monkeypatch.setattr(C, "_kst_window_date", lambda now_utc=None: "2026-07-22")
-    assert C.main("BTC", "OBSV") == 0
-
-    marker = json.loads(open(str(ledger / "etf_obsv_done.json")).read())
-    assert marker["as_of"] == "2026-07-21", "MAX(latest_as_of) not used"
-    assert marker["expected_issuer_as_of"] == "2026-07-21"
-    assert _fs_lines(str(ledger / "obsv_first_seen.log")) == 1
-    rows = _log_rows(tmp, "OBSV")
-    assert len([r for r in rows if r[0] == "2026-07-22" and r[4] == 1]) == 1
-
-
-def test_dup_latest_takes_the_newest_row_not_an_arbitrary_one(env, monkeypatch):
-    """MAX(latest_as_of), not a sampled row.
-
-    A stale row carrying the same digest but an older latest_as_of would,
-    if picked, put the issuer below target and silently suppress the
-    completion.  The aggregate has to read the newest.
-    """
-    tmp, ledger = env
-    con = sqlite3.connect(str(tmp / "core.sqlite"))
-    for win, ts, latest in [("2026-07-16", "2026-07-16T01:00:00Z", "2026-07-15"),
-                            ("2026-07-21", "2026-07-21T01:00:00Z", "2026-07-21")]:
-        con.execute("INSERT INTO etf_collect_log (source_id, input_digest, "
-                    "processed_at, rows_added, revisions_added, window_date_kst, "
-                    "latest_as_of, completed) VALUES (?,?,?,0,0,?,?,0)",
-                    ("etf_issuer_obsv", "digStale", ts, win, latest))
-    con.commit()
-    con.close()
-
-    _ratify(tmp, "OBSV", 0)
-    monkeypatch.setattr(E, "poll_and_collect", _poll("2026-07-21", "digStale"))
-    monkeypatch.setattr(C, "_kst_window_date", lambda now_utc=None: "2026-07-22")
-    assert C.main("BTC", "OBSV") == 0          # target 07-21
-
-    assert os.path.exists(str(ledger / "etf_obsv_done.json")), \
-        "a stale duplicate row suppressed the completion"
-    marker = json.loads(open(str(ledger / "etf_obsv_done.json")).read())
-    assert marker["as_of"] == "2026-07-21"
 
 
 def test_ledger_commits_before_the_marker(env, monkeypatch):
-    """B-15 durability: the marker is the gate that stops the next slot, so
-    it must never exist without a settled ledger row.  A crash between the
-    two has to leave a recoverable state, not a marker that claims a
-    completion the database has no record of.
-    """
+    """B-15 durability: a crash at _write_done leaves the ledger settled and
+    the window recoverable."""
     tmp, ledger = env
-    _accumulate(monkeypatch, ["2026-07-17", "2026-07-20", "2026-07-21"],
-                "digDur", "2026-07-21")
     _ratify(tmp, "OBSV", 0)
-    monkeypatch.setattr(C, "_kst_window_date", lambda now_utc=None: "2026-07-22")
-    daily_before, _ = _counts(tmp, "OBSV")
-
     real_write = C._write_done
 
     def crash(*a, **k):
         raise OSError("simulated crash before the marker")
     monkeypatch.setattr(C, "_write_done", crash)
+    monkeypatch.setattr(E, "poll_and_collect", _poll("2026-07-16", "digDur"))
     with pytest.raises(OSError):
         C.main("BTC", "OBSV")
 
     rows = _log_rows(tmp, "OBSV")
-    current = [r for r in rows if r[0] == "2026-07-22"]
-    assert len(current) == 1 and current[0][4] == 1, \
+    assert len(rows) == 1 and rows[0][4] == 1, \
         "ledger was not durable before the marker"
     assert not os.path.exists(str(ledger / "etf_obsv_done.json"))
     assert _fs_lines(str(ledger / "obsv_first_seen.log")) == 0
 
-    # recovery run: marker restored, first_seen made good exactly once.
-    # Only _write_done is restored - undo() would also revert the fixture's
-    # LEDGER/DB/REGISTRY patches.
     monkeypatch.setattr(C, "_write_done", real_write)
     assert C.main("BTC", "OBSV") == 0
-
     assert os.path.exists(str(ledger / "etf_obsv_done.json")), "marker not recovered"
     assert _fs_lines(str(ledger / "obsv_first_seen.log")) == 1
-    rows = _log_rows(tmp, "OBSV")
-    assert len([r for r in rows if r[0] == "2026-07-22"]) == 1, \
-        "recovery duplicated the settled row"
-    assert len([r for r in rows if r[0] == "2026-07-22" and r[4] == 1]) == 1
-    daily_after, _ = _counts(tmp, "OBSV")
-    assert daily_after == daily_before, "canonical rows changed during recovery"
+    assert len(_log_rows(tmp, "OBSV")) == 1, "recovery duplicated a row"
+
+
+# ------------------------------------------------- IBIT no-regression
+def test_ibit_semantics_are_untouched_by_d3(env, monkeypatch):
+    tmp, ledger = env
+    monkeypatch.setattr(E, "poll_and_collect", _poll("2026-07-16", "digI"))
+    assert C.main("BTC", "IBIT") == 0
+    marker = json.loads(open(str(ledger / "done.json")).read())
+    assert marker["expected_issuer_as_of"] == "2026-07-16"
+    assert _fs_lines(str(ledger / "fs.log")) == 1
+    assert not os.path.exists(str(ledger / "etf_ibit_done.json"))
+
+
+def test_ibit_completed_duplicate_keeps_b16(env, monkeypatch):
+    """An already-completed digest re-read in the same window recovers the
+    marker and tops up first_seen, exactly as before D3."""
+    tmp, ledger = env
+    monkeypatch.setattr(E, "poll_and_collect", _poll("2026-07-16", "digI"))
+    C.main("BTC", "IBIT")
+    os.remove(str(ledger / "done.json"))
+    assert C.main("BTC", "IBIT") == 0
+    assert os.path.exists(str(ledger / "done.json"))
+    assert _fs_lines(str(ledger / "fs.log")) == 2
+
+
+def test_ibit_holiday_same_digest_keeps_b16(env, monkeypatch):
+    """Prior window completed, same digest satisfies today's target: marker
+    only, and no first_seen because the originating window already has it."""
+    tmp, ledger = env
+    con = sqlite3.connect(str(tmp / "core.sqlite"))
+    con.execute("INSERT INTO etf_collect_log (source_id, input_digest, "
+                "processed_at, rows_added, revisions_added, window_date_kst, "
+                "latest_as_of, completed) VALUES (?,?,?,?,?,?,?,?)",
+                ("etf_issuer_ibit", "digHol", "2026-07-16T01:00:00Z", 1, 0,
+                 "2026-07-16", "2026-07-16", 1))
+    con.commit()
+    con.close()
+
+    monkeypatch.setattr(E, "poll_and_collect", _poll("2026-07-16", "digHol"))
+    monkeypatch.setattr(C, "_kst_window_date", lambda now_utc=None: "2026-07-17")
+    assert C.main("BTC", "IBIT") == 0
+    marker = json.loads(open(str(ledger / "done.json")).read())
+    assert marker["window_date_kst"] == "2026-07-17"
+    assert marker["expected_issuer_as_of"] == "2026-07-16"
+    assert _fs_lines(str(ledger / "fs.log")) == 0

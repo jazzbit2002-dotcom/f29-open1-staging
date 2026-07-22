@@ -1,36 +1,40 @@
 #!/usr/bin/env python3
 """
-D3 patch applier for scripts/collect_etf_ibit.py.
+D3 patch applier for scripts/collect_etf_ibit.py  (A-safe).
 
 Makes the completion target per-issuer:
 
   ratified lag (int >= 0)  -> expected_issuer_as_of is that many U.S.
                               business days behind the baseline; lag 0 is
-                              the existing IBIT rule, so B-2/B-16 stay put
+                              the existing IBIT rule, so B-2/B-15/B-16 stay
+                              exactly as ratified
   lag is None              -> observation_only: collect, parse, store,
-                              revision and collect_log all run, but no
-                              done marker and no first_seen line
+                              revision and the new-digest collect_log row
+                              all run, but no done marker and no first_seen
 
-Because first_seen is reserved as the completion ledger, etf_collect_log
-is the only promotion evidence for an unratified issuer.  An unchanged
-file in a NEW window is therefore still an observation and gets one row,
-keyed on (source_id, digest, window) so repeat slots never duplicate it.
+etf_collect_log is keyed PRIMARY KEY (source_id, input_digest), so it is a
+first-observation ledger, not a per-window one: exactly one row per digest,
+never rewritten.  An unchanged file in a later window is not a new lag
+sample and gets no row.  Execution liveness lives in pipeline_runs and the
+cron log.
 
-Those rows outlive promotion, so the duplicate lookup can no longer be a
-single fetchone(): once an issuer is ratified there are several rows for
-the same digest with different windows and completed=0, and which one
-SQLite returns is undefined.  The lookup is an explicit aggregate
-instead, which also makes the branch independent of row order.
+A row written while an issuer was unratified carries completed=0 and a
+window_date_kst pinned to its FIRST observation.  It is deliberately NOT
+promoted in place after ratification: window_date_kst must keep the first
+observation for lag calculation, so "settled this window then crashed" and
+"old completed digest reused across a holiday" would be indistinguishable.
+Ratification therefore takes effect from the next new digest, which flows
+through the untouched fresh/store path.
 
-The registry does not carry target_lag_us_business_days yet (D5 scope),
-so the resolver falls back to lag 0 for IBIT - preserving already-ratified
+The registry does not carry target_lag_us_business_days yet (D5 scope), so
+the resolver falls back to lag 0 for IBIT - preserving already-ratified
 behaviour - and to None for everyone else, which is the safe direction.
 
   usage:  python3 d3_apply.py [--check]
 
 Same contract as d1_apply / d4_apply: exact-string hunks with expected
-match counts, three legal states only, a parse gate before writing, and
-no write on abort.
+match counts, three legal states only, a parse gate before writing, and no
+write on abort.
 
 Requires D4 to be applied first (the hunks anchor on D4 output).
 """
@@ -72,22 +76,6 @@ def _target_lag_for(ticker, meta):
     return lag
 
 
-def _first_seen_has_window(first_seen_log, window_date):
-    """True when the first_seen ledger already carries this window.
-
-    Distinguishes a crash that lost the line (write it) from a marker that
-    was deleted after the line was already written (do not write it twice).
-    """
-    path = FIRST_SEEN_LOG if first_seen_log is None else first_seen_log
-    if not os.path.exists(path):
-        return False
-    try:
-        with open(path, encoding="utf-8") as f:
-            return ("\\twindow=%s\\t" % window_date) in f.read()
-    except OSError:
-        return False
-
-
 '''
 
 _D3_META = '''    meta = asset_cfg.get("issuers", {}).get(ticker, {})
@@ -96,92 +84,35 @@ _D3_META = '''    meta = asset_cfg.get("issuers", {}).get(ticker, {})
     # An issuer whose lag is not ratified runs observation-only - it
     # collects and stores, but never claims a window complete, so neither
     # the done marker nor the first_seen ledger is touched.  That blank is
-    # the intended state; the promotion evidence lives in etf_collect_log.
+    # the intended state; the lag evidence is the first-observation row
+    # each new digest leaves in etf_collect_log.
     target_lag = _target_lag_for(ticker, meta)
     observation_only = target_lag is None
     expected = None if observation_only else _expected_as_of(window, target_lag)'''
 
-_DUP_OLD = '''        dup = con.execute(
-            "SELECT window_date_kst, latest_as_of, completed FROM etf_collect_log "
-            "WHERE source_id=? AND input_digest=?", (source_id, digest)).fetchone()
-        if dup:
-            dup_window, dup_latest, dup_completed = dup'''
+_DUP_OLD = '''            if dup_latest >= expected and not _done_today(window, done_marker):'''
 
-_DUP_NEW = '''        # D3: observation rows mean one digest can span several windows, so
-        # duplicate state is aggregated rather than sampled with a single
-        # fetchone() - those rows survive promotion, and which one SQLite
-        # would return is undefined.
-        dup_stats = con.execute(
-            "SELECT COUNT(*), MAX(latest_as_of), MAX(window_date_kst), "
-            "MAX(CASE WHEN completed=1 THEN 1 ELSE 0 END), "
-            "MAX(CASE WHEN completed=1 AND window_date_kst=? THEN 1 ELSE 0 END), "
-            "MAX(CASE WHEN window_date_kst=? THEN 1 ELSE 0 END) "
-            "FROM etf_collect_log WHERE source_id=? AND input_digest=?",
-            (window, window, source_id, digest)).fetchone()
-        dup = dup_stats[0] > 0
-        if dup:
-            # dup_window is kept for the existing run-log message only;
-            # no branch depends on it any more.
-            (_dup_rows, dup_latest, dup_window, has_completed_any,
-             has_completed_current_window, has_current_window_row) = dup_stats
-            if observation_only and not has_current_window_row:
-                # first_seen stays empty for an unratified issuer, so this
-                # ledger is the only promotion evidence.  One row per
-                # window, however many slots poll it.
-                con.execute(
-                    "INSERT INTO etf_collect_log (source_id, input_digest, "
-                    "processed_at, rows_added, revisions_added, "
-                    "window_date_kst, latest_as_of, completed) "
-                    "VALUES (?,?,?,0,0,?,?,0)",
-                    (source_id, digest,
-                     _now_utc().strftime("%Y-%m-%dT%H:%M:%SZ"),
-                     window, dup_latest))
-                con.commit()'''
-
-_COMPLETE_OLD = '''            if dup_latest >= expected and not _done_today(window, done_marker):
-                _write_done(window, expected, dup_latest, digest, done_marker)
-                if dup_window == window:
-                    _log_first_seen(window, dup_latest, first_seen_log)'''
-
-_COMPLETE_NEW = '''            if (not observation_only and dup_latest >= expected
-                    and not _done_today(window, done_marker)):
-                # B-15 durability: the ledger commits BEFORE the marker.
-                # The marker is what stops the next slot from running, so a
-                # marker written ahead of the ledger would leave a window
-                # that claims completion with no completed=1 row and no way
-                # to recover it the same day.
-                #
-                # Settle this window in the ledger.  A row left over from
-                # the observation period is promoted in place; if promotion
-                # landed before any slot ran today, insert the completion.
-                if not has_completed_current_window:
-                    if has_current_window_row:
-                        con.execute(
-                            "UPDATE etf_collect_log SET completed=1 "
-                            "WHERE source_id=? AND input_digest=? "
-                            "AND window_date_kst=?",
-                            (source_id, digest, window))
-                    else:
-                        con.execute(
-                            "INSERT INTO etf_collect_log (source_id, input_digest, "
-                            "processed_at, rows_added, revisions_added, "
-                            "window_date_kst, latest_as_of, completed) "
-                            "VALUES (?,?,?,0,0,?,?,1)",
-                            (source_id, digest,
-                             _now_utc().strftime("%Y-%m-%dT%H:%M:%SZ"),
-                             window, dup_latest))
-                    con.commit()
-                _write_done(window, expected, dup_latest, digest, done_marker)
-                # first_seen fires on the first completion this issuer has
-                # ever had, or to make good a line this window lost to a
-                # crash - never twice for the same window.
-                if (not has_completed_any
-                        or (has_completed_current_window
-                            and not _first_seen_has_window(first_seen_log, window))):
-                    _log_first_seen(window, dup_latest, first_seen_log)'''
+_DUP_NEW = '''            if observation_only or not dup_completed:
+                # Two cases collapse into a plain no-op, and neither may
+                # touch collect_log, the marker or first_seen:
+                #  - observation_only: no ratified target exists, so nothing
+                #    can claim completion.
+                #  - not dup_completed: this row was written while the issuer
+                #    was still unratified.  Promoting it in place is unsafe,
+                #    because window_date_kst has to keep the FIRST
+                #    observation window for lag calculation - which leaves
+                #    "settled this window then crashed" and "old completed
+                #    digest reused across a holiday" indistinguishable.
+                #    Ratification takes effect from the next new digest.
+                _run_log(con, runlog_tag, "NOOP",
+                         "digest=%s no-op observation_only=%s completed=%s"
+                         % (digest[:12], observation_only, dup_completed))
+                print("[noop] %s digest unchanged - no marker, no first_seen"
+                      % ticker)
+            elif dup_latest >= expected and not _done_today(window, done_marker):'''
 
 HUNKS = [
-    ("target lag resolver and ledger helpers", 1,
+    ("target lag resolver", 1,
      'def main(asset="BTC", ticker="IBIT"):\n'
      '    os.makedirs(LEDGER, exist_ok=True)\n'
      '    done_marker, lockfile, first_seen_log, runlog_tag = _paths_for(ticker)',
@@ -194,11 +125,8 @@ HUNKS = [
      '    meta = asset_cfg.get("issuers", {}).get(ticker, {})',
      _D3_META),
 
-    ("aggregate duplicate state + observation ledger", 1,
+    ("duplicate branch: observation-only and unratified rows no-op", 1,
      _DUP_OLD, _DUP_NEW),
-
-    ("completion settles the window and first_seen", 1,
-     _COMPLETE_OLD, _COMPLETE_NEW),
 
     ("store branch respects observation_only", 1,
      '        target_reached = latest >= expected',

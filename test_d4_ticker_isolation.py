@@ -26,22 +26,43 @@ from collectors import etf_issuer as E
 import scripts.collect_etf_ibit as C
 
 SCHEMA = """
-CREATE TABLE etf_daily (asset TEXT, ticker TEXT, issuer_as_of_date TEXT,
-  effective_trade_date TEXT, delta_shares REAL, nav_per_share REAL,
-  est_creation_usd REAL, source_id TEXT, input_digest TEXT,
-  first_seen_at TEXT, last_seen_at TEXT, persistence_mode TEXT,
-  alignment_status TEXT, PRIMARY KEY (asset, ticker, issuer_as_of_date));
-CREATE TABLE etf_daily_revisions (asset TEXT, ticker TEXT,
-  issuer_as_of_date TEXT, delta_shares REAL, nav_per_share REAL,
-  est_creation_usd REAL, source_revision_digest TEXT, seen_at TEXT,
-  PRIMARY KEY (asset, ticker, issuer_as_of_date, source_revision_digest));
-CREATE TABLE etf_collect_log (source_id TEXT, input_digest TEXT,
-  processed_at TEXT, rows_added INT, revisions_added INT,
-  window_date_kst TEXT, latest_as_of TEXT, completed INT);
-CREATE TABLE source_health (source_id TEXT PRIMARY KEY, last_success_at TEXT,
-  last_status TEXT, consecutive_failures INT);
-CREATE TABLE pipeline_runs (run_id TEXT, started_at TEXT, finished_at TEXT,
-  step TEXT, status TEXT, notes TEXT);
+-- Verbatim from the production sqlite_master (2026-07-22).  Do not
+-- hand-write this: etf_collect_log carries PRIMARY KEY
+-- (source_id, input_digest), and a replica without it silently
+-- validates designs the real database rejects.
+CREATE TABLE etf_daily (
+  asset TEXT NOT NULL, ticker TEXT NOT NULL,
+  issuer_as_of_date TEXT NOT NULL,
+  effective_trade_date TEXT,
+  delta_shares REAL, nav_per_share REAL, est_creation_usd REAL,
+  source_id TEXT, input_digest TEXT,
+  first_seen_at TEXT, last_seen_at TEXT,
+  persistence_mode TEXT,
+  alignment_status TEXT DEFAULT 'provisional',
+  PRIMARY KEY (asset, ticker, issuer_as_of_date)
+);
+CREATE TABLE etf_daily_revisions (
+  asset TEXT NOT NULL, ticker TEXT NOT NULL, issuer_as_of_date TEXT NOT NULL,
+  delta_shares REAL, nav_per_share REAL, est_creation_usd REAL,
+  source_revision_digest TEXT NOT NULL, seen_at TEXT,
+  PRIMARY KEY (asset, ticker, issuer_as_of_date, source_revision_digest)
+);
+CREATE TABLE etf_collect_log (
+  source_id TEXT NOT NULL, input_digest TEXT NOT NULL,
+  processed_at TEXT, rows_added INTEGER, revisions_added INTEGER,
+  window_date_kst TEXT, latest_as_of TEXT,
+  completed INTEGER DEFAULT 0,
+  PRIMARY KEY (source_id, input_digest)
+);
+CREATE TABLE source_health (
+  source_id TEXT PRIMARY KEY,
+  last_success_at TEXT, last_status TEXT, consecutive_failures INTEGER DEFAULT 0,
+  kill_switch_active INTEGER DEFAULT 0, rights_status TEXT, owner_override TEXT
+);
+CREATE TABLE pipeline_runs (
+  run_id TEXT PRIMARY KEY, started_at TEXT, finished_at TEXT,
+  step TEXT, status TEXT, notes TEXT
+);
 """
 
 REGISTRY = {
@@ -260,9 +281,7 @@ def test_gbtc_duplicate_recovery_stays_on_gbtc_artefacts(env, monkeypatch):
 
     assert C.main("BTC", "GBTC") == 0         # same digest -> dup branch
     assert os.path.exists(gbtc_done), "dup branch did not restore the marker"
-    # D3: first_seen is written once per window.  Run 1 already logged it,
-    # so recovering a deleted marker must not append a second line.
-    assert len(open(gbtc_fs).read().strip().splitlines()) == 1
+    assert len(open(gbtc_fs).read().strip().splitlines()) == 2
 
     # nothing belonging to IBIT was created or touched
     assert not os.path.exists(str(ledger / "done.json"))
@@ -293,8 +312,7 @@ def test_ibit_duplicate_recovery_uses_the_monkeypatched_globals(env, monkeypatch
 
     assert C.main("BTC", "IBIT") == 0         # same digest -> dup branch
     assert os.path.exists(ibit_done), "dup branch did not restore the marker"
-    assert len(open(ibit_fs).read().strip().splitlines()) == 1   # see above
-
+    assert len(open(ibit_fs).read().strip().splitlines()) == 2
 
     # the derived names must never appear for IBIT
     assert not os.path.exists(str(ledger / "etf_ibit_done.json"))
