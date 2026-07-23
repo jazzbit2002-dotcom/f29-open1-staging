@@ -83,13 +83,13 @@ def _issuer(**extra):
 
 REGISTRY = {
     "assets": {"BTC": {"enabled": True, "issuers": {
-        # no field -> legacy fallback keeps the ratified lag of 0
-        "IBIT": _issuer(),
+        # ratified explicitly (D5b removes the legacy no-field fallback)
+        "IBIT": _issuer(target_lag_us_business_days=0),
         # ratified explicitly
         "GBTC": _issuer(target_lag_us_business_days=0),
         "LAGONE": _issuer(target_lag_us_business_days=1),
-        # no field, not IBIT -> observation-only
-        "OBSV": _issuer(),
+        # explicit null -> observation-only (was a no-field fallback)
+        "OBSV": _issuer(target_lag_us_business_days=None),
         # explicitly unratified
         "NULLED": _issuer(target_lag_us_business_days=None),
     }}},
@@ -150,14 +150,21 @@ def _fs_lines(path):
 
 
 # ---------------------------------------------------------- 1-2  resolver
-def test_ibit_without_field_falls_back_to_zero():
-    assert C._target_lag_for("IBIT", {}) == 0
-    assert C._target_lag_for("ibit", {}) == 0
+def test_ibit_without_field_raises():
+    # D5b: IBIT loses its fallback - a missing key is a hard error.
+    with pytest.raises(ValueError):
+        C._target_lag_for("IBIT", {})
+    with pytest.raises(ValueError):
+        C._target_lag_for("ibit", {})
 
 
-def test_non_ibit_without_field_is_observation_only():
-    assert C._target_lag_for("GBTC", {}) is None
-    assert C._target_lag_for("FBTC", {}) is None
+def test_non_ibit_without_field_raises():
+    # D5b: a missing key is a hard error for every ticker; observation-only
+    # is now an explicit null, never an absent field.
+    with pytest.raises(ValueError):
+        C._target_lag_for("GBTC", {})
+    with pytest.raises(ValueError):
+        C._target_lag_for("FBTC", {})
 
 
 # ---------------------------------------------------------- 3-5  values

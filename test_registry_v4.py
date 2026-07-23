@@ -59,13 +59,11 @@ def good_registry():
     }
 
 
-def current_v3_like():
-    """Pre-migration state: IBIT relies on the legacy fallback."""
-    reg = good_registry()
-    reg["schema_version"] = "etf-issuer-registry-v3"
-    del reg["assets"]["BTC"]["issuers"]["IBIT"]["target_lag_us_business_days"]
-    del reg["assets"]["BTC"]["issuers"]["GBTC"]["target_lag_us_business_days"]
-    return reg
+def current_v4():
+    """Prior state under v4: every issuer already carries an explicit lag
+    key (IBIT 0, GBTC null), so a bare candidate is a NO_CHANGE and the
+    strict D5b driver can read the current side without raising."""
+    return good_registry()
 
 
 def _write(tmp_path, name, obj):
@@ -119,7 +117,7 @@ def _rules(capsys):
 # ------------------------------------------------------- positive control
 
 def test_positive_control_static_and_transition_pass(env, capsys):
-    assert env.run(good_registry(), current_v3_like()) == 0
+    assert env.run(good_registry(), current_v4()) == 0
     rules, out = _rules(capsys)
     assert [r for r in rules if r.startswith("S") or r.startswith("T")] == []
     assert "errors=0" in out
@@ -135,14 +133,14 @@ def test_positive_control_static_only(env, capsys):
 def test_schema_version_wrong(env, capsys):
     reg = good_registry()
     reg["schema_version"] = "etf-issuer-registry-v3"
-    assert env.run(reg, current_v3_like()) == 1
+    assert env.run(reg, current_v4()) == 1
     assert "S1" in _rules(capsys)[0]
 
 
 def test_lag_key_missing(env, capsys):
     reg = good_registry()
     del reg["assets"]["BTC"]["issuers"]["GBTC"]["target_lag_us_business_days"]
-    assert env.run(reg, current_v3_like()) == 1
+    assert env.run(reg, current_v4()) == 1
     assert "S2" in _rules(capsys)[0]
 
 
@@ -150,35 +148,35 @@ def test_lag_key_missing(env, capsys):
 def test_lag_value_rejected(env, capsys, bad):
     reg = good_registry()
     reg["assets"]["BTC"]["issuers"]["GBTC"]["target_lag_us_business_days"] = bad
-    assert env.run(reg, current_v3_like()) == 1
+    assert env.run(reg, current_v4()) == 1
     assert "S3" in _rules(capsys)[0]
 
 
 def test_enabled_issuer_url_null(env, capsys):
     reg = good_registry()
     reg["assets"]["BTC"]["issuers"]["IBIT"]["download_url"] = None
-    assert env.run(reg, current_v3_like()) == 1
+    assert env.run(reg, current_v4()) == 1
     assert "S5" in _rules(capsys)[0]
 
 
 def test_enabled_issuer_url_empty(env, capsys):
     reg = good_registry()
     reg["assets"]["BTC"]["issuers"]["IBIT"]["download_url"] = ""
-    assert env.run(reg, current_v3_like()) == 1
+    assert env.run(reg, current_v4()) == 1
     assert "S5" in _rules(capsys)[0]
 
 
 def test_enabled_issuer_parser_null(env, capsys):
     reg = good_registry()
     reg["assets"]["BTC"]["issuers"]["IBIT"]["parser"] = None
-    assert env.run(reg, current_v3_like()) == 1
+    assert env.run(reg, current_v4()) == 1
     assert "S5" in _rules(capsys)[0]
 
 
 def test_parser_not_registered(env, capsys):
     reg = good_registry()
     reg["assets"]["BTC"]["issuers"]["IBIT"]["parser"] = "no_such_parser"
-    assert env.run(reg, current_v3_like()) == 1
+    assert env.run(reg, current_v4()) == 1
     assert "S6" in _rules(capsys)[0]
 
 
@@ -190,7 +188,7 @@ def test_parser_names_come_from_live_registry():
 def test_parser_type_rejected(env, capsys, bad):
     reg = good_registry()
     reg["assets"]["BTC"]["issuers"]["IBIT"]["parser"] = bad
-    assert env.run(reg, current_v3_like()) == 1
+    assert env.run(reg, current_v4()) == 1
     assert "S5" in _rules(capsys)[0]
 
 
@@ -198,28 +196,28 @@ def test_parser_type_rejected(env, capsys, bad):
 def test_ticker_charset(env, capsys, bad):
     reg = good_registry()
     reg["assets"]["BTC"]["issuers"][bad] = _issuer(False, None)
-    assert env.run(reg, current_v3_like()) == 1
+    assert env.run(reg, current_v4()) == 1
     assert "S4" in _rules(capsys)[0]
 
 
 def test_asset_enabled_must_be_bool(env, capsys):
     reg = good_registry()
     reg["assets"]["BTC"]["enabled"] = "true"
-    assert env.run(reg, current_v3_like()) == 1
+    assert env.run(reg, current_v4()) == 1
     assert "S12" in _rules(capsys)[0]
 
 
 def test_issuer_enabled_must_be_bool(env, capsys):
     reg = good_registry()
     reg["assets"]["BTC"]["issuers"]["GBTC"]["enabled"] = 1
-    assert env.run(reg, current_v3_like()) == 1
+    assert env.run(reg, current_v4()) == 1
     assert "S12" in _rules(capsys)[0]
 
 
 def test_kill_switch_must_be_bool(env, capsys):
     reg = good_registry()
     reg["assets"]["BTC"]["issuers"]["GBTC"]["kill_switch_active"] = "false"
-    assert env.run(reg, current_v3_like()) == 1
+    assert env.run(reg, current_v4()) == 1
     assert "S12" in _rules(capsys)[0]
 
 
@@ -227,14 +225,14 @@ def test_kill_switch_must_be_bool(env, capsys):
 def test_freshness_rejected(env, capsys, bad):
     reg = good_registry()
     reg["freshness"]["max_lag_business_days"] = bad
-    assert env.run(reg, current_v3_like()) == 1
+    assert env.run(reg, current_v4()) == 1
     assert "S8" in _rules(capsys)[0]
 
 
 def test_freshness_missing(env, capsys):
     reg = good_registry()
     del reg["freshness"]
-    assert env.run(reg, current_v3_like()) == 1
+    assert env.run(reg, current_v4()) == 1
     assert "S8" in _rules(capsys)[0]
 
 
@@ -247,21 +245,21 @@ def test_freshness_missing(env, capsys):
 def test_mapping_promotion_rejected(env, capsys, key, bad):
     reg = good_registry()
     reg["mapping_promotion"][key] = bad
-    assert env.run(reg, current_v3_like()) == 1
+    assert env.run(reg, current_v4()) == 1
     assert "S7" in _rules(capsys)[0]
 
 
 def test_mapping_promotion_key_missing(env, capsys):
     reg = good_registry()
     del reg["mapping_promotion"]["sample_window"]
-    assert env.run(reg, current_v3_like()) == 1
+    assert env.run(reg, current_v4()) == 1
     assert "S7" in _rules(capsys)[0]
 
 
 def test_mapping_promotion_absent(env, capsys):
     reg = good_registry()
     del reg["mapping_promotion"]
-    assert env.run(reg, current_v3_like()) == 1
+    assert env.run(reg, current_v4()) == 1
     assert "S7" in _rules(capsys)[0]
 
 
@@ -269,12 +267,12 @@ def test_unknown_fields_allowed(env, capsys):
     reg = good_registry()
     reg["future_block"] = {"anything": 1}
     reg["assets"]["BTC"]["issuers"]["GBTC"]["note_for_later"] = "x"
-    assert env.run(reg, current_v3_like()) == 0
+    assert env.run(reg, current_v4()) == 0
     assert "errors=0" in capsys.readouterr().out
 
 
 def test_issuer_removed_from_candidate(env, capsys):
-    cur = current_v3_like()
+    cur = current_v4()
     cur["assets"]["BTC"]["issuers"]["FBTC"] = _issuer(False, None,
                                                       lag_key=False)
     assert env.run(good_registry(), cur) == 1
@@ -284,7 +282,7 @@ def test_issuer_removed_from_candidate(env, capsys):
 def test_enabled_with_null_lag_is_warning_only(env, capsys):
     reg = good_registry()
     reg["assets"]["BTC"]["issuers"]["IBIT"]["target_lag_us_business_days"] = None
-    cur = current_v3_like()
+    cur = current_v4()
     cur["assets"]["BTC"]["issuers"]["IBIT"]["enabled"] = True
     assert env.run(reg, cur) == 1        # lag 0 -> None is a REAL_CHANGE
     rules = _rules(capsys)[0]
@@ -311,7 +309,7 @@ def test_enabled_null_lag_warning_without_transition(env, capsys):
 def test_candidate_structure_diagnosed_not_raised(env, capsys, mangle):
     reg = good_registry()
     mangle(reg)
-    assert env.run(reg, current_v3_like()) == 1
+    assert env.run(reg, current_v4()) == 1
     rules, out = _rules(capsys)
     assert any(r in ("S13", "S11") for r in rules), out
 
@@ -324,7 +322,7 @@ def test_candidate_structure_diagnosed_not_raised(env, capsys, mangle):
     lambda r: r["assets"]["BTC"]["issuers"].__setitem__("GBTC", "bad"),
 ])
 def test_current_structure_diagnosed_not_raised(env, capsys, mangle):
-    cur = current_v3_like()
+    cur = current_v4()
     mangle(cur)
     assert env.run(good_registry(), cur) == 1
     rules, out = _rules(capsys)
@@ -336,7 +334,7 @@ def test_current_structure_diagnosed_not_raised(env, capsys, mangle):
 def test_current_enabled_truthy_string_is_refused(env, capsys):
     """`enabled: "false"` is truthy to the driver - it must not be read here
     as a satisfied "disabled before the change" proof."""
-    cur = current_v3_like()
+    cur = current_v4()
     cur["assets"]["BTC"]["issuers"]["GBTC"]["enabled"] = "false"
     cand = good_registry()
     cand["assets"]["BTC"]["issuers"]["GBTC"]["target_lag_us_business_days"] = 1
@@ -345,7 +343,7 @@ def test_current_enabled_truthy_string_is_refused(env, capsys):
 
 
 def test_current_lag_malformed_is_refused(env, capsys):
-    cur = current_v3_like()
+    cur = current_v4()
     cur["assets"]["BTC"]["issuers"]["GBTC"]["target_lag_us_business_days"] = "BAD"
     cand = good_registry()
     cand["assets"]["BTC"]["issuers"]["GBTC"]["target_lag_us_business_days"] = 1
@@ -354,21 +352,21 @@ def test_current_lag_malformed_is_refused(env, capsys):
 
 
 def test_current_asset_enabled_must_be_bool(env, capsys):
-    cur = current_v3_like()
+    cur = current_v4()
     cur["assets"]["BTC"]["enabled"] = 1
     assert env.run(good_registry(), cur) == 1
     assert "C2" in _rules(capsys)[0]
 
 
 def test_current_kill_switch_must_be_bool(env, capsys):
-    cur = current_v3_like()
+    cur = current_v4()
     cur["assets"]["BTC"]["issuers"]["GBTC"]["kill_switch_active"] = "false"
     assert env.run(good_registry(), cur) == 1
     assert "C2" in _rules(capsys)[0]
 
 
 def test_current_ticker_charset_is_refused(env, capsys):
-    cur = current_v3_like()
+    cur = current_v4()
     cur["assets"]["BTC"]["issuers"]["GB TC"] = _issuer(False, None,
                                                        lag_key=False)
     cand = good_registry()
@@ -380,7 +378,7 @@ def test_current_ticker_charset_is_refused(env, capsys):
 
 def test_unusable_current_entry_blocks_its_transition(env, capsys):
     """A refused current entry must not fall through as an approved change."""
-    cur = current_v3_like()
+    cur = current_v4()
     cur["assets"]["BTC"]["issuers"]["GBTC"]["enabled"] = "false"
     cand = good_registry()
     cand["assets"]["BTC"]["issuers"]["GBTC"]["target_lag_us_business_days"] = 1
@@ -392,7 +390,7 @@ def test_unusable_current_entry_blocks_its_transition(env, capsys):
 # ------------------------------------------------------ transition checks
 
 def test_lag_change_while_enabled(env, capsys):
-    cur = current_v3_like()
+    cur = current_v4()
     cur["assets"]["BTC"]["issuers"]["GBTC"]["enabled"] = True
     cur["assets"]["BTC"]["issuers"]["GBTC"]["download_url"] = "https://x/y"
     cur["assets"]["BTC"]["issuers"]["GBTC"]["parser"] = REAL_PARSER
@@ -406,7 +404,7 @@ def test_lag_change_while_enabled(env, capsys):
 def test_lag_change_disabled_without_marker_passes(env, capsys):
     cand = good_registry()
     cand["assets"]["BTC"]["issuers"]["GBTC"]["target_lag_us_business_days"] = 2
-    assert env.run(cand, current_v3_like()) == 0
+    assert env.run(cand, current_v4()) == 0
     assert "errors=0" in capsys.readouterr().out
 
 
@@ -414,7 +412,7 @@ def test_lag_change_disabled_with_current_marker(env, capsys):
     env.marker(C._expected_as_of(WINDOW, 0), name="etf_gbtc_done.json")
     cand = good_registry()
     cand["assets"]["BTC"]["issuers"]["GBTC"]["target_lag_us_business_days"] = 2
-    assert env.run(cand, current_v3_like()) == 1
+    assert env.run(cand, current_v4()) == 1
     assert "T1" in _rules(capsys)[0]
 
 
@@ -423,7 +421,7 @@ def test_marker_for_other_window_is_not_current(env, capsys):
                name="etf_gbtc_done.json")
     cand = good_registry()
     cand["assets"]["BTC"]["issuers"]["GBTC"]["target_lag_us_business_days"] = 2
-    assert env.run(cand, current_v3_like()) == 0
+    assert env.run(cand, current_v4()) == 0
     assert "errors=0" in capsys.readouterr().out
 
 
@@ -431,7 +429,7 @@ def test_enable_transition_warns(env, capsys):
     cand = good_registry()
     cand["assets"]["BTC"]["issuers"]["GBTC"] = _issuer(
         True, None, url="https://x/y", parser="grayscale_ooxml")
-    cur = current_v3_like()
+    cur = current_v4()
     cur["assets"]["BTC"]["issuers"]["GBTC"]["target_lag_us_business_days"] = None
     assert env.run(cand, cur) == 0
     rules, out = _rules(capsys)
@@ -439,7 +437,7 @@ def test_enable_transition_warns(env, capsys):
 
 
 def test_transition_runs_unless_static_only(env, capsys):
-    cur = current_v3_like()
+    cur = current_v4()
     cur["assets"]["BTC"]["issuers"]["GBTC"]["enabled"] = True
     cur["assets"]["BTC"]["issuers"]["GBTC"]["download_url"] = "https://x/y"
     cur["assets"]["BTC"]["issuers"]["GBTC"]["parser"] = REAL_PARSER
@@ -456,53 +454,88 @@ def test_current_defaults_to_operational_registry():
     assert args.current == C.REGISTRY
 
 
-# ---------------------------------------------- materialization exception
+# ------------------------------------------ v4 transition contract (D5b)
+# D5b ends the materialization exception: with every issuer carrying an
+# explicit lag key the "key just appeared" branch can never fire, so the
+# transition rules judge the value alone.  Name-based exemption is gone -
+# an IBIT lag change is an ordinary REAL_CHANGE that T1 catches directly.
 
-def test_ibit_materialization_marker_matches(env, capsys):
-    env.marker(C._expected_as_of(WINDOW, 0))
-    assert env.run(good_registry(), current_v3_like()) == 0
+def test_current_missing_lag_key_is_refused(env, capsys):
+    """A current entry without the lag key is unreadable under the strict
+    driver: C3, never a silent legacy zero."""
+    cur = current_v4()
+    del cur["assets"]["BTC"]["issuers"]["GBTC"]["target_lag_us_business_days"]
+    cand = good_registry()
+    cand["assets"]["BTC"]["issuers"]["GBTC"]["target_lag_us_business_days"] = 1
+    assert env.run(cand, cur) == 1
+    assert "C3" in _rules(capsys)[0]
+
+
+def test_explicit_zero_to_zero_is_no_change(env, capsys):
+    assert env.run(good_registry(), current_v4()) == 0   # IBIT 0->0, GBTC null->null
     assert "errors=0" in capsys.readouterr().out
 
 
-def test_ibit_materialization_marker_mismatch(env, capsys):
-    env.marker("1999-01-04")
-    assert env.run(good_registry(), current_v3_like()) == 1
+def test_null_to_zero_disabled_without_marker_passes(env, capsys):
+    cand = good_registry()
+    cand["assets"]["BTC"]["issuers"]["GBTC"]["target_lag_us_business_days"] = 0
+    assert env.run(cand, current_v4()) == 0   # null->0 REAL_CHANGE, disabled, no marker
+    assert "errors=0" in capsys.readouterr().out
+
+
+def test_null_to_zero_with_current_marker_is_refused(env, capsys):
+    env.marker(C._expected_as_of(WINDOW, 0), name="etf_gbtc_done.json")
+    cand = good_registry()
+    cand["assets"]["BTC"]["issuers"]["GBTC"]["target_lag_us_business_days"] = 0
+    assert env.run(cand, current_v4()) == 1   # null->0 REAL_CHANGE + current marker
     assert "T1" in _rules(capsys)[0]
 
 
-def test_ibit_materialization_without_marker(env, capsys):
-    assert env.run(good_registry(), current_v3_like()) == 0
-    assert "errors=0" in capsys.readouterr().out
+def test_zero_to_null_with_current_marker_is_refused(env, capsys):
+    env.marker(C._expected_as_of(WINDOW, 0), name="etf_gbtc_done.json")
+    cur = current_v4()
+    cur["assets"]["BTC"]["issuers"]["GBTC"]["target_lag_us_business_days"] = 0
+    cand = good_registry()
+    cand["assets"]["BTC"]["issuers"]["GBTC"]["target_lag_us_business_days"] = None
+    assert env.run(cand, cur) == 1            # 0->null REAL_CHANGE + current marker
+    assert "T1" in _rules(capsys)[0]
 
 
 def test_ibit_real_lag_change_is_refused(env, capsys):
-    """Exemption must not be granted for being IBIT."""
+    """No exemption for being IBIT: 0 -> 1 is a REAL_CHANGE that T1 catches
+    directly now that the materialization branch is gone."""
     cand = good_registry()
     cand["assets"]["BTC"]["issuers"]["IBIT"]["target_lag_us_business_days"] = 1
-    assert env.run(cand, current_v3_like()) == 1
+    assert env.run(cand, current_v4()) == 1
     assert "T1" in _rules(capsys)[0]
 
 
-def test_non_ibit_materialization_of_null(env, capsys):
-    cur = current_v3_like()
-    cand = good_registry()
-    assert "target_lag_us_business_days" not in \
-        cur["assets"]["BTC"]["issuers"]["GBTC"]
-    assert cand["assets"]["BTC"]["issuers"]["GBTC"][
-        "target_lag_us_business_days"] is None
-    assert env.run(cand, cur) == 0
-    assert "errors=0" in capsys.readouterr().out
+def test_materialization_contract_is_absent_from_validator():
+    """Persistent regression guard for H3: the materialization-exception
+    machinery must be gone from the *approved, imported* validator module,
+    not merely from a grep of the file on disk."""
+    import inspect
+    source = inspect.getsource(V)
+    assert "_materialization_ok" not in source
+    assert "key_moved" not in source
+    assert "MATERIALIZATION" not in source
 
 
 # ------------------------------------------------------ ledger isolation
 
 def test_ledger_isolation_marker_is_read_from_given_dir(env, capsys):
-    """Result must depend on the synthetic ledger, not the operational one."""
-    env.marker("1999-01-04")
-    assert env.run(good_registry(), current_v3_like()) == 1
+    """Result must depend on the synthetic ledger, not the operational one.
+    After H3 the marker only matters for a REAL_CHANGE, so this drives a
+    genuine GBTC null->0 transition and flips ERROR<->PASS on the presence
+    of the current-window marker in the given ledger dir."""
+    cur = current_v4()
+    cand = good_registry()
+    cand["assets"]["BTC"]["issuers"]["GBTC"]["target_lag_us_business_days"] = 0
+    env.marker(C._expected_as_of(WINDOW, 0), name="etf_gbtc_done.json")
+    assert env.run(cand, cur) == 1                 # marker present -> T1
     capsys.readouterr()
-    os.remove(os.path.join(env.ledger, env.marker_name))
-    assert env.run(good_registry(), current_v3_like()) == 0
+    os.remove(os.path.join(env.ledger, "etf_gbtc_done.json"))
+    assert env.run(cand, cur) == 0                 # marker gone -> same change PASSes
 
 
 def test_bound_ledger_rebinds_all_four_globals(tmp_path):
@@ -538,7 +571,7 @@ def test_bound_ledger_noop_when_none(tmp_path):
 def test_globals_restored_after_full_run(env):
     saved = [getattr(C, n) for n in V._LEDGER_GLOBALS]
     env.marker(C._expected_as_of(WINDOW, 0))
-    env.run(good_registry(), current_v3_like())
+    env.run(good_registry(), current_v4())
     assert [getattr(C, n) for n in V._LEDGER_GLOBALS] == saved
 
 
@@ -547,12 +580,12 @@ def test_globals_restored_after_full_run(env):
 def test_validator_creates_no_files(env):
     env.marker(C._expected_as_of(WINDOW, 0))
     before = sorted(os.listdir(env.ledger))
-    env.run(good_registry(), current_v3_like())
+    env.run(good_registry(), current_v4())
     assert sorted(os.listdir(env.ledger)) == before
 
 
 def test_validator_never_creates_lockfile(env):
-    env.run(good_registry(), current_v3_like())
+    env.run(good_registry(), current_v4())
     assert not os.path.exists(os.path.join(env.ledger, env.lock_name))
     assert not os.path.exists(os.path.join(env.ledger, ".etf_gbtc.lock"))
 
@@ -566,7 +599,7 @@ def test_no_project_bytecode_written(env, tmp_path):
     """
     prefix = tmp_path / "pyc"
     cand = _write(tmp_path, "cand.json", good_registry())
-    cur = _write(tmp_path, "cur.json", current_v3_like())
+    cur = _write(tmp_path, "cur.json", current_v4())
     environ = dict(os.environ)
     environ.pop("PYTHONDONTWRITEBYTECODE", None)
     before = _pycache_dirs()

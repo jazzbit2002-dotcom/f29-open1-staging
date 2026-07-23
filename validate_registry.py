@@ -380,34 +380,12 @@ def _check_one_transition(asset, ticker, old_meta, new_meta,
                    "and the runtime gate is unwired - separate preflight "
                    "required")
 
-    key_moved = (LAG_KEY in old_meta) != (LAG_KEY in new_meta)
-
-    if old_lag == new_lag and not key_moved:
+    if old_lag == new_lag:
         return                                            # NO_CHANGE
-
-    if old_lag == new_lag and key_moved:                  # MATERIALIZATION
-        if _materialization_ok(ticker, old_lag, new_lag, window, ledger_dir):
-            return
-        # falls through to the REAL_CHANGE rules deliberately
 
     _require_real_change_conditions(scope, ticker, old_lag, new_lag,
                                     old_enabled, new_enabled,
                                     window, ledger_dir, diags)
-
-
-def _materialization_ok(ticker, old_lag, new_lag, window, ledger_dir):
-    """No-op materialization of an already-effective lag.
-
-    Deliberately blind to the ticker name: an issuer is not exempt for
-    being IBIT, it is exempt for the value being provably unchanged.
-    """
-    if old_lag is None or new_lag != old_lag:
-        return False
-    marker = _current_marker(ticker, window, ledger_dir)
-    if marker is None:
-        return True     # no stale marker exists, so B-2 cannot be misled
-    return marker.get("expected_issuer_as_of") == C._expected_as_of(window,
-                                                                    new_lag)
 
 
 def _require_real_change_conditions(scope, ticker, old_lag, new_lag,
